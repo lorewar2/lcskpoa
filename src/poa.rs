@@ -202,29 +202,37 @@ impl Traceback {
                 AlignmentOperation::Match(Some((p, _))) => {
                     i = p + 1;
                     j -= 1;
+                    println!("Match");
                 }
                 AlignmentOperation::Del(Some((p, _))) => {
                     i = p + 1;
+                    println!("Del");
                 }
                 AlignmentOperation::Ins(Some(p)) => {
                     i = p + 1;
                     j -= 1;
+                    println!("Ins");
                 }
                 AlignmentOperation::Match(None) => {
                     i = 0;
                     j -= 1;
+                    println!("Match Non");
                 }
                 AlignmentOperation::Del(None) => {
                     i -= 1;
+                    println!("Del Non");
                 }
                 AlignmentOperation::Ins(None) => {
                     j -= 1;
+                    println!("Ins Non");
                 }
                 AlignmentOperation::Xclip(r) => {
                     i = r;
+                    println!("X clip");
                 }
                 AlignmentOperation::Yclip(r, _) => {
                     j = r;
+                    println!("Y clip");
                 }
             }
         }
