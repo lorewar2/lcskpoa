@@ -32,8 +32,31 @@ pub fn pairwise_simd (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, mismat
     }
     // calculations
     // filling out score matrices and back matrix
+    // the number of vectors for query SIMD 8 for now
+    let num_seq_vec = seq_y.len() / 8;
+    // make vectors of 8 of size num_seq_vec
+    let mut HH = vec![vec![0; 8]; num_seq_vec];
+    let mut EE = vec![vec![0; 8]; num_seq_vec];
+    let mut SCORE = vec![0; 8];
+
     for i in 1..seq_x.len() + 1 {
-        for j in 1..seq_y.len() + 1 {
+        let mut X = vec![0; 8];
+        let mut F = vec![0; 8];
+        for j in 0..num_seq_vec {
+            let mut H = HH[j].clone();
+            let mut E = EE[j].clone();
+
+            let T1 = H[7];
+            H = vec![0, 0, 0, 0, 0, 0, T1, 0];
+            //OR two vectors for testing
+            let mut H: Vec<i32> = H
+            .iter()
+            .zip(X.iter())
+            .map(|(&a, &b)| a | b) // Bitwise OR
+            .collect();
+            X = vec![0, 0, 0, 0, 0, 0, 0, T1];
+
+            // Add the match one for the H
             // fill del matrix 
             // get j - 1 score from same matrix with gap extend
             let temp_del_score = pair_wise_matrix[i][j - 1].del_score + gap_extend_score as isize;
