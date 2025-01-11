@@ -1,7 +1,8 @@
 
 use std::cmp;
 const MIN_SCORE: isize = -858_993_459; // negative infinity
-use std::simd::{i32x4, Simd};
+use std::simd::{u16x8, Simd};
+use std::simd::cmp::SimdOrd;
 
 #[derive(Clone)]
 struct PairwiseMatrixCell {
@@ -12,6 +13,91 @@ struct PairwiseMatrixCell {
 }
 
 pub fn pairwise_simd (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, mismatch_score: i32, gap_open_score: i32, gap_extend_score: i32) {
+    // filling out score matrices and back matrix
+    // the number of vectors for query SIMD 8 for now
+    let num_seq_vec = seq_y.len() / 8;
+    // make vectors of 8 of size num_seq_vec
+    let left_mask_1 = u16x8::from_array([0, 1, 1, 1, 1, 1, 1, 1]);
+    let left_mask_7 = u16x8::from_array([0, 0, 0, 0, 0, 0, 0, 1]);
+    let right_mask_1 = u16x8::from_array([1, 1, 1, 1, 1, 1, 1, 0]);
+    let right_mask_7 = u16x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]);
+    let mut HH: Vec<u16x8> = vec![u16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]); num_seq_vec];
+    let mut EE: Vec<u16x8> = vec![u16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]); num_seq_vec];
+    for i in 0..seq_x.len() {
+        let mut X = u16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut F = u16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]);
+        for j in 0..num_seq_vec {
+            let mut H = HH[j].clone();
+            let mut E = EE[j].clone();
+            let T1 = H.rotate_elements_left::<7>() * right_mask_7;
+            H = (H.rotate_elements_right::<1>() * left_mask_1) + T1;
+            X = T1;
+            let mut MM: Vec<u16> = vec![0; 8];
+            // make a match vector of 8, just for testing, for the real thing profiling is required
+            let base_to_match = seq_x[i];
+            for iter in 0..8 {
+                if base_to_match == seq_y[(j * 8) + iter] {
+                    MM[iter] = match_score as u16;
+                }
+                else {
+                    MM[iter] = mismatch_score as u16;
+                }
+                // add match mismatch score to H
+                //H[iter] = H[iter] + MM[iter];
+                // make H max of E or H
+                //if E[iter] > H[iter] {
+                //    H[iter] = E[iter];
+                //}
+                // make F
+            }
+            // convert MM to simd
+            let MM_simd = u16x8::from_array(MM[0..8].try_into().expect(""));
+            H = H + MM_simd;
+            H = H.simd_max(E);
+
+            F = F.rotate_elements_left::<7>() * right_mask_7;
+            F = (H.rotate_elements_right::<1>() * left_mask_1) + F;
+            // make simd of gap open gap extend 
+            for iter in 0..8 {
+                F[iter] = F[iter] - gap_open_score - gap_extend_score;
+            }
+            let mut T2 = F.clone();
+            for _iter in 0..8 {
+                // lshift 2 t2, for gap extends
+                T2 = vec![0, T2[0], T2[1], T2[2], T2[3], T2[4], T2[5], T2[6]];
+                for iter2 in 0..8 {
+                    // update if better
+                    if T2[iter2] > F[iter2] {
+                        F[iter2] = T2[iter2];
+                    }
+                }
+            }
+            // update H based on max F
+            for iter in 0..8 {
+                if F[iter] > H[iter] {
+                    H[iter] = F[iter];
+                }
+                F[iter] = F[iter] + gap_open_score;
+                if H[iter] > F[iter] {
+                    F[iter] = H[iter];
+                }
+            }
+            // Final update
+            HH[j] = H.clone();
+            for iter in 0..8 {
+                if (H[iter] - gap_open_score) > E[iter] {
+                    E[iter] = H[iter] - gap_open_score;
+                }   
+                E[iter] = E[iter] - gap_extend_score;
+            }
+            EE[j] = E;
+        }
+        println!("{:?}", HH);
+    }
+
+}
+
+pub fn fake_pairwise_simd (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, mismatch_score: i32, gap_open_score: i32, gap_extend_score: i32) {
     // filling out score matrices and back matrix
     // the number of vectors for query SIMD 8 for now
     let num_seq_vec = seq_y.len() / 8;
@@ -94,15 +180,15 @@ pub fn pairwise (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, mismatch_sc
 
     // fill out the first row and colomn
     let temp_value = gap_open_score as isize + gap_extend_score as isize;
-    pair_wise_matrix[0][1] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('d') };
-    pair_wise_matrix[1][0] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('i') };
+    //pair_wise_matrix[0][1] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('d') };
+    //pair_wise_matrix[1][0] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('i') };
     for i in 2..seq_y.len() + 1 {
-        let temp_value = pair_wise_matrix[0][i - 1].del_score + gap_extend_score as isize;
-        pair_wise_matrix[0][i] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('d') };
+        //let temp_value = pair_wise_matrix[0][i - 1].del_score + gap_extend_score as isize;
+        //pair_wise_matrix[0][i] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('d') };
     }
     for i in 2..seq_x.len() + 1 {
-        let temp_value = pair_wise_matrix[i - 1][0].ins_score + gap_extend_score as isize;
-        pair_wise_matrix[i][0] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('i') };
+        //let temp_value = pair_wise_matrix[i - 1][0].ins_score + gap_extend_score as isize;
+        //pair_wise_matrix[i][0] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('i') };
     }
     // calculations
     // filling out score matrices and back matrix

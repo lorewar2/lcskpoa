@@ -4,7 +4,7 @@ mod poa;
 mod pairwise;
 use pairwise::*;
 use poa::*;
-use std::simd::{i32x4, Simd};
+use std::simd::{u16x4, Simd};
 
 fn main() {
     let seq_x = vec![65, 65, 82, 65, 65, 82, 65, 65];
@@ -13,8 +13,15 @@ fn main() {
     let mismatch_score = -1;
     let gap_open_score = 2;
     let gap_extend_score = 1;
-    pairwise_simd(&seq_x, &seq_y, match_score, mismatch_score, gap_open_score, gap_extend_score);
-    
+    let mut simd_a = u16x4::from_array([1, 2, 3, 4]);
+    let mut simd_b = u16x4::from_array([1, 0, 0, 0]);
+    let mut simd_mask = u16x4::from_array([0, 1, 1, 1]);
+    simd_a = simd_a.rotate_elements_right::<1>();
+    simd_a = simd_a * simd_mask + simd_b;
+    println!("{:?}", simd_a);
+    //pairwise_simd(&seq_x, &seq_y, match_score, mismatch_score, gap_open_score, gap_extend_score);
+    //pairwise(&seq_x, &seq_y, match_score, mismatch_score, -gap_open_score, -gap_extend_score, 10);
+
     /*
     // TEST SIMD Add two arrays of 4 elements each in parallel using SIMD
     // Create two arrays
@@ -22,7 +29,7 @@ fn main() {
     let b = [5, 6, 7, 8];
 
     // Load the arrays into SIMD vectors (f32x4 can hold 4 floats in parallel)
-    let simd_a = i32x4::from_array(a);
+    
     let simd_b = i32x4::from_array(b);
 
     // Perform element-wise addition using SIMD
