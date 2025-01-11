@@ -11,155 +11,78 @@ struct PairwiseMatrixCell {
     back: char,
 }
 
-pub fn pairwise_simd (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, mismatch_score: i32, gap_open_score: i32, gap_extend_score: i32) -> (Vec<u8>, isize) {
-    // variables to save results
-    let mut align_vec: Vec<u8> = Vec::new();
-
-    // make one matrix 
-    let mut pair_wise_matrix: Vec<Vec<PairwiseMatrixCell>> = vec![vec![PairwiseMatrixCell { match_score: (0), del_score: (0), ins_score: (0), back: ('X') }; seq_y.len() + 1]; seq_x.len() + 1];
-
-    // fill out the first row and colomn
-    let temp_value = gap_open_score as isize + gap_extend_score as isize;
-    pair_wise_matrix[0][1] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('d') };
-    pair_wise_matrix[1][0] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('i') };
-    for i in 2..seq_y.len() + 1 {
-        let temp_value = pair_wise_matrix[0][i - 1].del_score + gap_extend_score as isize;
-        pair_wise_matrix[0][i] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('d') };
-    }
-    for i in 2..seq_x.len() + 1 {
-        let temp_value = pair_wise_matrix[i - 1][0].ins_score + gap_extend_score as isize;
-        pair_wise_matrix[i][0] = PairwiseMatrixCell { match_score: (temp_value), del_score: (temp_value), ins_score: (temp_value), back: ('i') };
-    }
-    // calculations
+pub fn pairwise_simd (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, mismatch_score: i32, gap_open_score: i32, gap_extend_score: i32) {
     // filling out score matrices and back matrix
     // the number of vectors for query SIMD 8 for now
     let num_seq_vec = seq_y.len() / 8;
     // make vectors of 8 of size num_seq_vec
     let mut HH = vec![vec![0; 8]; num_seq_vec];
     let mut EE = vec![vec![0; 8]; num_seq_vec];
-    let mut SCORE = vec![0; 8];
-
-    for i in 1..seq_x.len() + 1 {
-        let mut X = vec![0; 8];
+    for i in 0..seq_x.len() {
+        let mut X = 0;
         let mut F = vec![0; 8];
         for j in 0..num_seq_vec {
             let mut H = HH[j].clone();
             let mut E = EE[j].clone();
-
             let T1 = H[7];
-            H = vec![0, 0, 0, 0, 0, 0, T1, 0];
-            //OR two vectors for testing
-            let mut H: Vec<i32> = H
-            .iter()
-            .zip(X.iter())
-            .map(|(&a, &b)| a | b) // Bitwise OR
-            .collect();
-            X = vec![0, 0, 0, 0, 0, 0, 0, T1];
+            H = vec![X, H[0], H[1], H[2], H[3], H[4], H[5], H[6]];
+            X = T1;
+            let mut MM = vec![0; 8];
+            // make a match vector of 8, just for testing, for the real thing profiling is required
+            let base_to_match = seq_x[i];
+            for iter in 0..8 {
+                if base_to_match == seq_y[(j * 8) + iter] {
+                    MM[iter] = match_score;
+                }
+                else {
+                    MM[iter] = mismatch_score;
+                }
+                // add match mismatch score to H
+                H[iter] = H[iter] + MM[iter];
+                // make H max of E or H
+                if E[iter] > H[iter] {
+                    H[iter] = E[iter];
+                }
+                // make F
+            }
+            F = vec![F[7], H[0], H[1], H[2], H[3], H[4], H[5], H[6]];
+            for iter in 0..8 {
+                F[iter] = F[iter] - gap_open_score - gap_extend_score;
+            }
+            let mut T2 = F.clone();
+            for _iter in 0..8 {
+                // lshift 2 t2, for gap extends
+                T2 = vec![0, T2[0], T2[1], T2[2], T2[3], T2[4], T2[5], T2[6]];
+                for iter2 in 0..8 {
+                    // update if better
+                    if T2[iter2] > F[iter2] {
+                        F[iter2] = T2[iter2];
+                    }
+                }
+            }
+            // update H based on max F
+            for iter in 0..8 {
+                if F[iter] > H[iter] {
+                    H[iter] = F[iter];
+                }
+                F[iter] = F[iter] + gap_open_score;
+                if H[iter] > F[iter] {
+                    F[iter] = H[iter];
+                }
+            }
+            // Final update
+            HH[j] = H.clone();
+            for iter in 0..8 {
+                if (H[iter] - gap_open_score) > E[iter] {
+                    E[iter] = H[iter] - gap_open_score;
+                }   
+                E[iter] = E[iter] - gap_extend_score;
+            }
+            EE[j] = E;
+        }
+        println!("{:?}", HH);
+    }
 
-            // Add the match one for the H
-            // fill del matrix 
-            // get j - 1 score from same matrix with gap extend
-            let temp_del_score = pair_wise_matrix[i][j - 1].del_score + gap_extend_score as isize;
-            // get j - 1 score from match matrix with gap open penalty
-            let temp_match_score = pair_wise_matrix[i][j - 1].match_score + gap_open_score as isize + gap_extend_score as isize;
-            // insert the max
-            pair_wise_matrix[i][j].del_score = cmp::max(temp_del_score, temp_match_score);
-
-            // fill ins matrix
-            // get i - 1 score from the same matrix
-            let temp_ins_score = pair_wise_matrix[i - 1][j].ins_score + gap_extend_score as isize;
-            // get i - 1 score from the match matrix with gap open penalty
-            let temp_match_score = pair_wise_matrix[i - 1][j].match_score + gap_open_score as isize + gap_extend_score as isize;
-            // insert the max
-            pair_wise_matrix[i][j].ins_score = cmp::max(temp_ins_score, temp_match_score);
-
-            // fill match matrix
-            // get the i,j from the insertion matrix
-            let temp_ins_score = pair_wise_matrix[i][j].ins_score;
-            // get the i,j from the deletion matrix
-            let temp_del_score = pair_wise_matrix[i][j].del_score;
-            // get the match from i-1,j-1 from match matrix with match score or mismatch score
-            let temp_match_score;
-            if seq_x[i - 1] == seq_y[j - 1] {
-                temp_match_score = pair_wise_matrix[i - 1][j - 1].match_score + match_score as isize;
-                pair_wise_matrix[i][j].back = 'm';
-            }
-            else {
-                temp_match_score = pair_wise_matrix[i - 1][j - 1].match_score + mismatch_score as isize;
-                pair_wise_matrix[i][j].back = 's';
-            }
-            // insert the max
-            pair_wise_matrix[i][j].match_score = cmp::max(temp_match_score, cmp::max(temp_ins_score, temp_del_score));
-            if (temp_match_score >= temp_ins_score) && (temp_match_score >= temp_del_score) {
-                // already allocated
-            }
-            else if temp_ins_score > temp_del_score {
-                pair_wise_matrix[i][j].back = 'i';
-            }
-            else {
-                pair_wise_matrix[i][j].back = 'd';
-            }
-        }
-    }
-    // back tracing using back matrix and filling out align_vec
-    let mut i = seq_x.len();
-    let mut j = seq_y.len();
-    let score = pair_wise_matrix[i][j].match_score;
-    let mut break_on_next = false;
-    // print the score matrix
-    println!("Score matrix");
-    for i_index in 0..seq_x.len() {
-        for j_index in 0..seq_y.len() {
-            print!(" {}", pair_wise_matrix[i_index][j_index].match_score);
-        }
-        println!("");
-    }
-    // print the del matrix
-    println!("Del matrix");
-    for i_index in 0..seq_x.len() {
-        for j_index in 0..seq_y.len() {
-            print!(" {}", pair_wise_matrix[i_index][j_index].del_score);
-        }
-        println!("");
-    }
-    // print the ins matrix
-    println!("Ins matrix");
-    for i_index in 0..seq_x.len() {
-        for j_index in 0..seq_y.len() {
-            print!(" {}", pair_wise_matrix[i_index][j_index].ins_score);
-        }
-        println!("");
-    }
-    loop {
-        match pair_wise_matrix[i][j].back {
-            'i' => {
-                i = i - 1;
-                align_vec.push('i' as u8);
-            },
-            'm' => {
-                i = i - 1;
-                j = j - 1;
-                align_vec.push('m' as u8);
-            },
-            's' => {
-                i = i - 1;
-                j = j - 1;
-                align_vec.push('s' as u8);
-            }
-            'd' => {
-                j = j - 1;
-                align_vec.push('d' as u8);
-            },
-            _ => (),
-        }
-        if break_on_next {
-            break;
-        }
-        if i == 0 && j == 0 {
-            break_on_next = true;
-        }
-    }
-    (align_vec.into_iter().rev().collect(), score)
 }
 
 pub fn pairwise (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, mismatch_score: i32, gap_open_score: i32, gap_extend_score: i32, band_size: usize) -> (Vec<u8>, isize) {

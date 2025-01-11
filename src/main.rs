@@ -7,15 +7,14 @@ use poa::*;
 use std::simd::{i32x4, Simd};
 
 fn main() {
-    let seq_x = vec![65, 65, 82];
-    let seq_y = vec![65, 65, 82];
+    let seq_x = vec![65, 65, 82, 65, 65, 82, 65, 65];
+    let seq_y = vec![65, 65, 82, 65, 65, 82, 65, 65];
     let match_score = 1;
     let mismatch_score = -1;
-    let gap_open_score = -2;
-    let gap_extend_score = -1;
-    let band_size = 10;
-    let (result_vec, score) = pairwise(&seq_x, &seq_y, match_score, mismatch_score, gap_open_score, gap_extend_score, band_size);
-    println!("{:?} {}", result_vec, score);
+    let gap_open_score = 2;
+    let gap_extend_score = 1;
+    pairwise_simd(&seq_x, &seq_y, match_score, mismatch_score, gap_open_score, gap_extend_score);
+    
     /*
     // TEST SIMD Add two arrays of 4 elements each in parallel using SIMD
     // Create two arrays
