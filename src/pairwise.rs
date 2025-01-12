@@ -1,8 +1,10 @@
 
 use std::cmp;
 const MIN_SCORE: isize = -858_993_459; // negative infinity
-use std::simd::{u16x8, Simd};
+use std::simd::{i16x8, Simd};
 use std::simd::cmp::SimdOrd;
+use std::simd::cmp::SimdPartialOrd;
+use std::collections::HashMap;
 
 #[derive(Clone)]
 struct PairwiseMatrixCell {
@@ -12,92 +14,140 @@ struct PairwiseMatrixCell {
     back: char,
 }
 
+pub fn profile_query (seq_y: &Vec<u8>, match_score: i32, mismatch_score: i32) -> Vec<Vec<i16x8>> {
+    let num_seq_vec = seq_y.len() / 8;
+    let mut MM_simd = vec![];
+    // make 4 vectors for query
+    let mut A_simd: Vec<i16x8> = vec![];
+    let mut C_simd: Vec<i16x8> = vec![];
+    let mut G_simd: Vec<i16x8> = vec![];
+    let mut T_simd: Vec<i16x8> = vec![];
+    // go through the query and populate the entries
+    for index_simd in 0..num_seq_vec {
+        let mut temp_A = vec![];
+        let mut temp_C = vec![];
+        let mut temp_G = vec![];
+        let mut temp_T = vec![];
+        let simd_seq = &seq_y[(index_simd * 8)..((index_simd + 1) * 8)];
+        for base in simd_seq {
+            if *base == 65 {
+                temp_A.push(match_score as i16);
+            }
+            else {
+                temp_A.push(mismatch_score as i16);
+            }
+            if *base == 67 {
+                temp_C.push(match_score as i16);
+            }
+            else {
+                temp_C.push(mismatch_score as i16);
+            }
+            if *base == 71 {
+                temp_G.push(match_score as i16);
+            }
+            else {
+                temp_G.push(mismatch_score as i16);
+            }
+            if *base == 84 {
+                temp_T.push(match_score as i16);
+            }
+            else {
+                temp_T.push(mismatch_score as i16);
+            }
+        }
+        A_simd.push(i16x8::from_array(temp_A[0..8].try_into().expect("")));
+        C_simd.push(i16x8::from_array(temp_C[0..8].try_into().expect("")));
+        G_simd.push(i16x8::from_array(temp_G[0..8].try_into().expect("")));
+        T_simd.push(i16x8::from_array(temp_T[0..8].try_into().expect("")));
+        //println!("{:?}", simd_seq);
+    }
+    MM_simd.push(A_simd);
+    MM_simd.push(C_simd);
+    MM_simd.push(G_simd);
+    MM_simd.push(T_simd);
+    MM_simd
+}
+
 pub fn pairwise_simd (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, mismatch_score: i32, gap_open_score: i32, gap_extend_score: i32) {
+    println!("real");
+    // initialize hash map for profiling 
+    let mut hash_table = HashMap::new();
+    hash_table.insert(65, 0);
+    hash_table.insert(67, 1);
+    hash_table.insert(71, 2);
+    hash_table.insert(84, 3);
+    // make the MM table 
+    let MM_simd_full = profile_query(seq_y, match_score, mismatch_score);
+
     // filling out score matrices and back matrix
     // the number of vectors for query SIMD 8 for now
     let num_seq_vec = seq_y.len() / 8;
     // make vectors of 8 of size num_seq_vec
-    let left_mask_1 = u16x8::from_array([0, 1, 1, 1, 1, 1, 1, 1]);
-    let left_mask_7 = u16x8::from_array([0, 0, 0, 0, 0, 0, 0, 1]);
-    let right_mask_1 = u16x8::from_array([1, 1, 1, 1, 1, 1, 1, 0]);
-    let right_mask_7 = u16x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]);
-    let mut HH: Vec<u16x8> = vec![u16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]); num_seq_vec];
-    let mut EE: Vec<u16x8> = vec![u16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]); num_seq_vec];
+    let gap_open_score = gap_open_score as i16;
+    let gap_extend_score = gap_extend_score as i16;
+    let gap_open_8 = i16x8::from_array([gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score]);
+    let gap_extend_8 = i16x8::from_array([gap_extend_score, gap_extend_score, gap_extend_score, gap_extend_score, gap_extend_score, gap_extend_score, gap_extend_score, gap_extend_score]);
+    let left_mask_1 = i16x8::from_array([0, 1, 1, 1, 1, 1, 1, 1]);
+    let right_mask_7 = i16x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]);
+    let mut HH: Vec<i16x8> = vec![i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]); num_seq_vec];
+    let mut EE: Vec<i16x8> = vec![i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]); num_seq_vec];
     for i in 0..seq_x.len() {
-        let mut X = u16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]);
-        let mut F = u16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut X = i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut F = i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]);
+        // get the database base
+        let data_base_index = hash_table.get(&seq_x[i]).unwrap();
         for j in 0..num_seq_vec {
             let mut H = HH[j].clone();
             let mut E = EE[j].clone();
+            //println!("H {:?}", H);
             let T1 = H.rotate_elements_left::<7>() * right_mask_7;
-            H = (H.rotate_elements_right::<1>() * left_mask_1) + T1;
+            //println!("T1 {:?}", T1);
+            H = (H.rotate_elements_right::<1>() * left_mask_1) + X;
+            //println!("H after rotate {:?}", H);
             X = T1;
-            let mut MM: Vec<u16> = vec![0; 8];
-            // make a match vector of 8, just for testing, for the real thing profiling is required
-            let base_to_match = seq_x[i];
-            for iter in 0..8 {
-                if base_to_match == seq_y[(j * 8) + iter] {
-                    MM[iter] = match_score as u16;
-                }
-                else {
-                    MM[iter] = mismatch_score as u16;
-                }
-                // add match mismatch score to H
-                //H[iter] = H[iter] + MM[iter];
-                // make H max of E or H
-                //if E[iter] > H[iter] {
-                //    H[iter] = E[iter];
-                //}
-                // make F
-            }
             // convert MM to simd
-            let MM_simd = u16x8::from_array(MM[0..8].try_into().expect(""));
+            let MM_simd = MM_simd_full[*data_base_index][j];
+            //let MM_simd = i16x8::from_array(MM[0..8].try_into().expect(""));
+            //println!("MM {:?}", MM_simd);
             H = H + MM_simd;
             H = H.simd_max(E);
 
             F = F.rotate_elements_left::<7>() * right_mask_7;
             F = (H.rotate_elements_right::<1>() * left_mask_1) + F;
             // make simd of gap open gap extend 
-            for iter in 0..8 {
-                F[iter] = F[iter] - gap_open_score - gap_extend_score;
-            }
+            F = F - gap_extend_8 - gap_open_8;
             let mut T2 = F.clone();
-            for _iter in 0..8 {
-                // lshift 2 t2, for gap extends
-                T2 = vec![0, T2[0], T2[1], T2[2], T2[3], T2[4], T2[5], T2[6]];
-                for iter2 in 0..8 {
-                    // update if better
-                    if T2[iter2] > F[iter2] {
-                        F[iter2] = T2[iter2];
-                    }
-                }
+            let all_non_positive = T2.simd_le(i16x8::splat(0)).all();
+            if all_non_positive {
+                F = H;
             }
-            // update H based on max F
-            for iter in 0..8 {
-                if F[iter] > H[iter] {
-                    H[iter] = F[iter];
+            else {
+                for _iter in 0..8 {
+                    // lshift 2 t2, for gap extends
+                    T2 = T2.rotate_elements_right::<1>() * left_mask_1;
+                    F = F.simd_max(T2);
                 }
-                F[iter] = F[iter] + gap_open_score;
-                if H[iter] > F[iter] {
-                    F[iter] = H[iter];
-                }
+                // update H based on max F
+                H = H.simd_max(F);
+                F = F + gap_open_8;
+                F = F.simd_max(H);
             }
+            
             // Final update
             HH[j] = H.clone();
-            for iter in 0..8 {
-                if (H[iter] - gap_open_score) > E[iter] {
-                    E[iter] = H[iter] - gap_open_score;
-                }   
-                E[iter] = E[iter] - gap_extend_score;
-            }
+            H = H - gap_open_8;
+            E = E.simd_max(H);
+            E = E - gap_extend_8;
+            //println!("E at end {:?}", E);
             EE[j] = E;
+            //println!("");
         }
         println!("{:?}", HH);
     }
-
 }
 
 pub fn fake_pairwise_simd (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, mismatch_score: i32, gap_open_score: i32, gap_extend_score: i32) {
+    println!("fake");
     // filling out score matrices and back matrix
     // the number of vectors for query SIMD 8 for now
     let num_seq_vec = seq_y.len() / 8;
@@ -110,8 +160,11 @@ pub fn fake_pairwise_simd (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, m
         for j in 0..num_seq_vec {
             let mut H = HH[j].clone();
             let mut E = EE[j].clone();
+            //println!("H {:?}", H);
             let T1 = H[7];
+            //println!("T1 {:?}", T1);
             H = vec![X, H[0], H[1], H[2], H[3], H[4], H[5], H[6]];
+            //println!("H after rotate {:?}", H);
             X = T1;
             let mut MM = vec![0; 8];
             // make a match vector of 8, just for testing, for the real thing profiling is required
@@ -131,6 +184,7 @@ pub fn fake_pairwise_simd (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, m
                 }
                 // make F
             }
+            //println!("MM {:?}", MM);
             F = vec![F[7], H[0], H[1], H[2], H[3], H[4], H[5], H[6]];
             for iter in 0..8 {
                 F[iter] = F[iter] - gap_open_score - gap_extend_score;
@@ -164,7 +218,9 @@ pub fn fake_pairwise_simd (seq_x: &Vec<u8>, seq_y: &Vec<u8>, match_score: i32, m
                 }   
                 E[iter] = E[iter] - gap_extend_score;
             }
+            //println!("E at end {:?}", E);
             EE[j] = E;
+            //println!("");
         }
         println!("{:?}", HH);
     }
