@@ -5,6 +5,9 @@ use petgraph::visit::Topo;
 use petgraph::{Directed, Graph, Incoming};
 pub const MIN_SCORE: i32 = -858_993_459; // negative infinity; see alignment/pairwise/mod.rs
 pub type POAGraph = Graph<u8, i32, Directed, usize>;
+use std::simd::{i16x8, Simd};
+use std::simd::cmp::SimdOrd;
+use std::collections::HashMap;
 
 // Unlike with a total order we may have arbitrary successors in the
 // traceback matrix. I have not yet figured out what the best level of
@@ -235,6 +238,71 @@ impl Traceback {
     }
 }
 
+#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
+pub struct TracebackSimd {
+    rows: usize,
+    cols: usize,
+    last: NodeIndex<usize>,
+    matrix: Vec<(Vec<i16x8>, usize, usize)>,
+}
+
+impl TracebackSimd {
+    fn with_capacity(m: usize, n: usize) -> Self {
+        let matrix: Vec<(Vec<i16x8>, usize, usize)> = vec![(vec![], 0, n + 1); m + 1];
+        TracebackSimd {
+            rows: m,
+            cols: n,
+            last: NodeIndex::new(0),
+            matrix,
+        }
+    }
+    fn initialize_scores(&mut self, gap_open: i32) {
+        let num_seq_vec = self.cols / 8;
+        for j in 0..num_seq_vec {
+            self.matrix[0].0.push(i16x8::from_array([((j + 0) as i16 * gap_open as i16),
+            ((j + 1) as i16 * gap_open as i16),
+            ((j + 2) as i16 * gap_open as i16),
+            ((j + 3) as i16 * gap_open as i16),
+            ((j + 4) as i16 * gap_open as i16),
+            ((j + 5) as i16 * gap_open as i16),
+            ((j + 6) as i16 * gap_open as i16),
+            ((j + 7) as i16 * gap_open as i16)]));
+        }
+    }
+    // create a new row according to the parameters
+    fn new_row(
+        &mut self,
+        row: usize,
+        size: usize,
+        gap_open: i32,
+        start: usize,
+        end: usize,
+    ) {
+        self.matrix[row].1 = start;
+        self.matrix[row].2 = end;
+        let num_seq_vec = self.cols / 8;
+        //makes full row for now change this!!!!!!!!!
+        self.matrix[0].0.push(i16x8::from_array([((0) as i16 * gap_open as i16),
+        (i16::MIN),
+        (i16::MIN),
+        (i16::MIN),
+        (i16::MIN),
+        (i16::MIN),
+        (i16::MIN),
+        (i16::MIN)]));
+        for _ in 1..num_seq_vec {
+            self.matrix[row].0.push(i16x8::from_array([(i16::MIN),
+            (i16::MIN),
+            (i16::MIN),
+            (i16::MIN),
+            (i16::MIN),
+            (i16::MIN),
+            (i16::MIN),
+            (i16::MIN)]));
+        }
+    }
+}
+
 /// A partially ordered aligner builder
 ///
 /// Uses consuming builder pattern for constructing partial order alignments with method chaining
@@ -274,7 +342,7 @@ impl Aligner {
     }
     pub fn global_simd(&mut self, query: &Vec<u8>) -> &mut Self {
         self.query = query.to_vec();
-        self.traceback = self.poa.custom_simd(query);
+        self.poa.custom_simd(query);
         self
     }
     /// Return alignment graph.
@@ -336,7 +404,6 @@ pub struct Poa {
 }
 
 impl Poa {
-
     /// Create a new POA graph from an initial reference sequence and alignment penalties.
     ///
     /// # Arguments
@@ -355,97 +422,152 @@ impl Poa {
         }
         Poa { match_score: match_score, mismatch_score: mismatch_score, gap_open_score: gap_open_score, graph, memory_usage: 0}
     }
-    pub fn custom_simd(&mut self, query: &Vec<u8>) -> Traceback {
+
+    pub fn profile_query (seq_y: &Vec<u8>, match_score: i32, mismatch_score: i32) -> Vec<Vec<i16x8>> {
+        let num_seq_vec = seq_y.len() / 8;
+        let mut MM_simd = vec![];
+        // make 4 vectors for query
+        let mut A_simd: Vec<i16x8> = vec![];
+        let mut C_simd: Vec<i16x8> = vec![];
+        let mut G_simd: Vec<i16x8> = vec![];
+        let mut T_simd: Vec<i16x8> = vec![];
+        // go through the query and populate the entries
+        for index_simd in 0..num_seq_vec {
+            let mut temp_A = vec![];
+            let mut temp_C = vec![];
+            let mut temp_G = vec![];
+            let mut temp_T = vec![];
+            let simd_seq = &seq_y[(index_simd * 8)..((index_simd + 1) * 8)];
+            for base in simd_seq {
+                if *base == 65 {
+                    temp_A.push(match_score as i16);
+                }
+                else {
+                    temp_A.push(mismatch_score as i16);
+                }
+                if *base == 67 {
+                    temp_C.push(match_score as i16);
+                }
+                else {
+                    temp_C.push(mismatch_score as i16);
+                }
+                if *base == 71 {
+                    temp_G.push(match_score as i16);
+                }
+                else {
+                    temp_G.push(mismatch_score as i16);
+                }
+                if *base == 84 {
+                    temp_T.push(match_score as i16);
+                }
+                else {
+                    temp_T.push(mismatch_score as i16);
+                }
+            }
+            A_simd.push(i16x8::from_array(temp_A[0..8].try_into().expect("")));
+            C_simd.push(i16x8::from_array(temp_C[0..8].try_into().expect("")));
+            G_simd.push(i16x8::from_array(temp_G[0..8].try_into().expect("")));
+            T_simd.push(i16x8::from_array(temp_T[0..8].try_into().expect("")));
+            //println!("{:?}", simd_seq);
+        }
+        MM_simd.push(A_simd);
+        MM_simd.push(C_simd);
+        MM_simd.push(G_simd);
+        MM_simd.push(T_simd);
+        MM_simd
+    }
+
+    pub fn custom_simd(&mut self, query: &Vec<u8>) {
         println!("simd");
+        // profile the query and what not
+        let mut hash_table = HashMap::new();
+        hash_table.insert(65, 0);
+        hash_table.insert(67, 1);
+        hash_table.insert(71, 2);
+        hash_table.insert(84, 3);
+        let MM_simd_full = Poa::profile_query(query, self.match_score, self.mismatch_score);
+        // other simd stuff required
+        let gap_open_score = self.gap_open_score as i16;
+        let gap_open_8 = i16x8::from_array([gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score]);
+        let left_mask_1 = i16x8::from_array([0, 1, 1, 1, 1, 1, 1, 1]);
+        let right_mask_7 = i16x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]);
         assert!(self.graph.node_count() != 0);
         // dimensions of the traceback matrix
         let (m, n) = (self.graph.node_count(), query.len());
-        let mut traceback = Traceback::with_capacity(m, n);
-        traceback.initialize_scores(self.gap_open_score);
+        let num_seq_vec = query.len() / 8;
+        let mut HH: Vec<Vec<i16x8>> = vec![];
+        //initialize HH with simd vecs, HH is used as traceback
+        for i in 0..m {
+            let mut temp_vec = vec![];
+            for j in 0..num_seq_vec {
+                if i == 0 {
+                    temp_vec.push(i16x8::from_array([((j + 0) as i16 * self.gap_open_score as i16),
+                    ((j + 1) as i16 * self.gap_open_score as i16),
+                    ((j + 2) as i16 * self.gap_open_score as i16),
+                    ((j + 3) as i16 * self.gap_open_score as i16),
+                    ((j + 4) as i16 * self.gap_open_score as i16),
+                    ((j + 5) as i16 * self.gap_open_score as i16),
+                    ((j + 6) as i16 * self.gap_open_score as i16),
+                    ((j + 7) as i16 * self.gap_open_score as i16)]));
+                }
+                else {
+                    temp_vec.push(i16x8::from_array([(i16::MIN),
+                    (i16::MIN),
+                    (i16::MIN),
+                    (i16::MIN),
+                    (i16::MIN),
+                    (i16::MIN),
+                    (i16::MIN),
+                    (i16::MIN)]));
+                }
+            }
+            HH.push(temp_vec);
+        }
+        
         // construct the score matrix (O(n^2) space)
         let mut topo = Topo::new(&self.graph);
         while let Some(node) = topo.next(&self.graph) {
+            let mut X = i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]);
+            let mut F = i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]);
             // reference base and index
-            let r = self.graph.raw_nodes()[node.index()].weight; // reference base at previous index
+            let r = self.graph.raw_nodes()[node.index()].weight;
             let i = node.index() + 1; // 0 index is for initialization so we start at 1
-            traceback.last = node;
+            let data_base_index = hash_table.get(&r).unwrap();
             // iterate over the predecessors of this node
             let prevs: Vec<NodeIndex<usize>> =
                 self.graph.neighbors_directed(node, Incoming).collect();
-            traceback.new_row(
-                i,
-                n + 1,
-                self.gap_open_score,
-                0,
-                n + 1,
-            );
-            // query base and its index in the DAG (traceback matrix rows)
-            for (query_index, query_base) in query.iter().enumerate() {
-                let j = query_index + 1; // 0 index is initialized so we start at 1
-                                        // match and deletion scores for the first reference base
-                let max_cell = if prevs.is_empty() {
-                    let temp_score;
-                    if r == *query_base {
-                        temp_score = self.match_score;
-                    }
-                    else {
-                        temp_score = self.mismatch_score;
-                    }
-                    TracebackCell {
-                        score: traceback.get(0, j - 1).score + temp_score,
-                        op: AlignmentOperation::Match(None),
-                    }
-                } else {
-                    let mut max_cell = 
-                        TracebackCell {
-                            score: MIN_SCORE,
-                            op: AlignmentOperation::Match(None),
-                        };
-                    for prev_node in &prevs {
-                        let i_p: usize = prev_node.index() + 1; // index of previous node
-                        let temp_score;
-                        if r == *query_base {
-                            temp_score = self.match_score;
-                        }
-                        else {
-                            temp_score = self.mismatch_score;
-                        }
-                        max_cell = max(
-                            max_cell,
-                            max(
-                                TracebackCell {
-                                    score: traceback.get(i_p, j - 1).score
-                                        + temp_score,
-                                    op: AlignmentOperation::Match(Some((i_p - 1, i - 1))),
-                                },
-                                TracebackCell {
-                                    score: traceback.get(i_p, j).score + self.gap_open_score,
-                                    op: AlignmentOperation::Del(Some((i_p - 1, i))),
-                                },
-                            ),
-                        );
-                    }
-                    max_cell
-                };
-                let score = max(
-                    max_cell,
-                    TracebackCell {
-                        score: traceback.get(i, j - 1).score + self.gap_open_score,
-                        op: AlignmentOperation::Ins(Some(i - 1)),
-                    },
-                );
-                traceback.set(i, j, score);
+            // vertical and diagonal
+            for prev_node in &prevs {
+                let i_p: usize = prev_node.index() + 1; // index of previous node
+                for simd_index in 0..num_seq_vec {
+                    let mut H = HH[i_p][simd_index].clone();
+                    let mut E = HH[i_p][simd_index].clone() - gap_open_8;
+                    
+                    let MM_simd = MM_simd_full[*data_base_index][simd_index];
+                    // need to define T2 as H cannot be modified here
+                    let T1 = H.rotate_elements_left::<7>() * right_mask_7;
+                    let mut T2 = (H.rotate_elements_right::<1>() * left_mask_1) + X;
+                    X = T1;
+                    // match score added
+                    T2 = T2 + MM_simd;
+                    // diagonal or horizontal
+                    H = H.simd_max(T2);
+                    H = H.simd_max(E);
+                    HH[i_p][simd_index] = H;
+                }
             }
-        }
-        // print the matrix here
-        for i in 0..m {
-            for j in 0..n {
-                print!(" {}", traceback.get(i, j). score);
+            // horizontal
+            for simd_index in 0..num_seq_vec {
+                let mut H = HH[i][simd_index].clone();
+                F = F.rotate_elements_left::<7>() * right_mask_7;
+                F = (H.rotate_elements_right::<1>() * left_mask_1) + F;
+                // make simd of gap open gap extend 
+                F = F - gap_open_8;
+                H = H.simd_max(F);
+                F = H;
             }
-            println!("");
-        }
-        traceback
     }
+}
 
     pub fn custom(&mut self, query: &Vec<u8>) -> Traceback {
         println!("Non simd");
