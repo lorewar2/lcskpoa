@@ -238,71 +238,6 @@ impl Traceback {
     }
 }
 
-#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
-pub struct TracebackSimd {
-    rows: usize,
-    cols: usize,
-    last: NodeIndex<usize>,
-    matrix: Vec<(Vec<i16x8>, usize, usize)>,
-}
-
-impl TracebackSimd {
-    fn with_capacity(m: usize, n: usize) -> Self {
-        let matrix: Vec<(Vec<i16x8>, usize, usize)> = vec![(vec![], 0, n + 1); m + 1];
-        TracebackSimd {
-            rows: m,
-            cols: n,
-            last: NodeIndex::new(0),
-            matrix,
-        }
-    }
-    fn initialize_scores(&mut self, gap_open: i32) {
-        let num_seq_vec = self.cols / 8;
-        for j in 0..num_seq_vec {
-            self.matrix[0].0.push(i16x8::from_array([((j + 0) as i16 * gap_open as i16),
-            ((j + 1) as i16 * gap_open as i16),
-            ((j + 2) as i16 * gap_open as i16),
-            ((j + 3) as i16 * gap_open as i16),
-            ((j + 4) as i16 * gap_open as i16),
-            ((j + 5) as i16 * gap_open as i16),
-            ((j + 6) as i16 * gap_open as i16),
-            ((j + 7) as i16 * gap_open as i16)]));
-        }
-    }
-    // create a new row according to the parameters
-    fn new_row(
-        &mut self,
-        row: usize,
-        size: usize,
-        gap_open: i32,
-        start: usize,
-        end: usize,
-    ) {
-        self.matrix[row].1 = start;
-        self.matrix[row].2 = end;
-        let num_seq_vec = self.cols / 8;
-        //makes full row for now change this!!!!!!!!!
-        self.matrix[0].0.push(i16x8::from_array([((0) as i16 * gap_open as i16),
-        (i16::MIN),
-        (i16::MIN),
-        (i16::MIN),
-        (i16::MIN),
-        (i16::MIN),
-        (i16::MIN),
-        (i16::MIN)]));
-        for _ in 1..num_seq_vec {
-            self.matrix[row].0.push(i16x8::from_array([(i16::MIN),
-            (i16::MIN),
-            (i16::MIN),
-            (i16::MIN),
-            (i16::MIN),
-            (i16::MIN),
-            (i16::MIN),
-            (i16::MIN)]));
-        }
-    }
-}
-
 /// A partially ordered aligner builder
 ///
 /// Uses consuming builder pattern for constructing partial order alignments with method chaining
@@ -490,82 +425,105 @@ impl Poa {
         let gap_open_score = self.gap_open_score as i16;
         let gap_open_8 = i16x8::from_array([gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score]);
         let left_mask_1 = i16x8::from_array([0, 1, 1, 1, 1, 1, 1, 1]);
+        let left_mask_1_neg = i16x8::from_array([i16::MIN, 1, 1, 1, 1, 1, 1, 1]);
         let right_mask_7 = i16x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]);
         assert!(self.graph.node_count() != 0);
         // dimensions of the traceback matrix
         let (m, n) = (self.graph.node_count(), query.len());
+        println!("query.len() {}", query.len());
         let num_seq_vec = query.len() / 8;
         let mut HH: Vec<Vec<i16x8>> = vec![];
         //initialize HH with simd vecs, HH is used as traceback
         for i in 0..m {
             let mut temp_vec = vec![];
-            for j in 0..num_seq_vec {
+            for j in 0..num_seq_vec as i16 {
                 if i == 0 {
-                    temp_vec.push(i16x8::from_array([((j + 0) as i16 * self.gap_open_score as i16),
-                    ((j + 1) as i16 * self.gap_open_score as i16),
-                    ((j + 2) as i16 * self.gap_open_score as i16),
-                    ((j + 3) as i16 * self.gap_open_score as i16),
-                    ((j + 4) as i16 * self.gap_open_score as i16),
-                    ((j + 5) as i16 * self.gap_open_score as i16),
-                    ((j + 6) as i16 * self.gap_open_score as i16),
-                    ((j + 7) as i16 * self.gap_open_score as i16)]));
+                    let gap_open_multiplier = i16x8::from_array([(j * 8) + 1, (j * 8) + 2, (j * 8) + 3, (j * 8) + 4, (j * 8) + 5, (j * 8) + 6, (j * 8) + 7, (j * 8) + 8]) * -gap_open_8;
+                    temp_vec.push(gap_open_multiplier);
                 }
                 else {
-                    temp_vec.push(i16x8::from_array([(i16::MIN),
-                    (i16::MIN),
-                    (i16::MIN),
-                    (i16::MIN),
-                    (i16::MIN),
-                    (i16::MIN),
-                    (i16::MIN),
-                    (i16::MIN)]));
+                    temp_vec.push(i16x8::from_array([i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN]));
                 }
             }
             HH.push(temp_vec);
         }
         
         // construct the score matrix (O(n^2) space)
+        let mut index = 0;
         let mut topo = Topo::new(&self.graph);
         while let Some(node) = topo.next(&self.graph) {
-            let mut X = i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]);
-            let mut F = i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]);
+            
+            let mut F = i16x8::from_array([0, 0, 0, 0, 0, 0, 0, (index + 1) * -gap_open_score]);
+            
             // reference base and index
             let r = self.graph.raw_nodes()[node.index()].weight;
-            let i = node.index() + 1; // 0 index is for initialization so we start at 1
+            let i = node.index(); // 0 index is for initialization so we start at 1
             let data_base_index = hash_table.get(&r).unwrap();
             // iterate over the predecessors of this node
-            let prevs: Vec<NodeIndex<usize>> =
-                self.graph.neighbors_directed(node, Incoming).collect();
+            let mut prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(node, Incoming).collect();
+            // add node index i (self referencing if no prev)
+            if prevs.len() == 0 {
+                prevs.push(node);
+            }
             // vertical and diagonal
             for prev_node in &prevs {
-                let i_p: usize = prev_node.index() + 1; // index of previous node
+                let i_p: usize = prev_node.index(); // index of previous node
+                println!("S");
+                let mut X = i16x8::from_array([(index) * -gap_open_score, 0, 0, 0, 0, 0, 0, 0]);
                 for simd_index in 0..num_seq_vec {
-                    let mut H = HH[i_p][simd_index].clone();
+                    let mut H_prev = HH[i_p][simd_index].clone();
+                    println!("H_prev {:?}", H_prev);
+                    let mut H_curr;
+                    // when no prevs, start
+                    if i_p == i {
+                        H_curr = i16x8::from_array([i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN]);
+                    }
+                    else {
+                        H_curr = HH[i][simd_index].clone();
+                    }
                     let mut E = HH[i_p][simd_index].clone() - gap_open_8;
-                    
                     let MM_simd = MM_simd_full[*data_base_index][simd_index];
+                    println!("MM simd {:?}", MM_simd);
                     // need to define T2 as H cannot be modified here
-                    let T1 = H.rotate_elements_left::<7>() * right_mask_7;
-                    let mut T2 = (H.rotate_elements_right::<1>() * left_mask_1) + X;
+                    let T1 = H_prev.rotate_elements_left::<7>() * right_mask_7;
+                    let mut T2 = (H_prev.rotate_elements_right::<1>() * left_mask_1) + X;
+                    println!("X {:?}", X);
                     X = T1;
                     // match score added
+                    println!("T2 {:?}", T2);
                     T2 = T2 + MM_simd;
+                    
+                    println!("E {:?}", E);
                     // diagonal or horizontal
-                    H = H.simd_max(T2);
-                    H = H.simd_max(E);
-                    HH[i_p][simd_index] = H;
+                    H_curr = H_curr.simd_max(T2);
+                    H_curr = H_curr.simd_max(E);
+                    HH[i][simd_index] = H_curr;
                 }
             }
-            // horizontal
+            // horizontal NEeds fixing
             for simd_index in 0..num_seq_vec {
                 let mut H = HH[i][simd_index].clone();
+                println!("H after ver {:?}", H);
                 F = F.rotate_elements_left::<7>() * right_mask_7;
-                F = (H.rotate_elements_right::<1>() * left_mask_1) + F;
+                F = (H.rotate_elements_right::<1>() * left_mask_1) + F + gap_open_8;
+                println!("F before {:?}", F);
+                let mut T3 = F;
+                for _iter in 0..8 {
+                    // lshift 2 t2, for gap extends
+                    T3 = T3.rotate_elements_right::<1>() * left_mask_1_neg;
+                    F = F.simd_max(T3);
+                }
                 // make simd of gap open gap extend 
-                F = F - gap_open_8;
+                
+                F = F ;
+                
                 H = H.simd_max(F);
                 F = H;
+                HH[i][simd_index] = H;
+                print!("{:?}", HH[i][simd_index]);
             }
+            println!("");
+            index += 1;
     }
 }
 

@@ -19,7 +19,7 @@ fn main() {
     //pairwise(&seq_x, &seq_y, match_score, mismatch_score, -gap_open_score, -gap_extend_score, 10);
     // nw for now
     // test poa simple here
-    let seqs = vec!["TCTTTCT".to_string(), "TTCTTTC".to_string()];
+    let seqs = vec!["TCTTTCTC".to_string(), "TTCTTTCC".to_string()];
     let mut seqs_bytes = vec![];
     for seq in seqs.iter() {
         seqs_bytes.push(seq.to_string().bytes().collect::<Vec<u8>>());
@@ -29,12 +29,12 @@ fn main() {
         aligner.global(seq);
     }
     // test poa simd here
-    let seqs = vec!["TCTTTCT".to_string(), "TTCTTTC".to_string()];
+    let seqs = vec!["TCTTTCTC".to_string(), "TTCTTTCC".to_string()];
     let mut seqs_bytes = vec![];
     for seq in seqs.iter() {
         seqs_bytes.push(seq.to_string().bytes().collect::<Vec<u8>>());
     }
-    let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs_bytes[0]);
+    let mut aligner = Aligner::new(match_score, mismatch_score, gap_open_score, &seqs_bytes[0]);
     for seq in seqs_bytes.iter().skip(1) {
         aligner.global_simd(seq);
     }
