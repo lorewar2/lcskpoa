@@ -7,6 +7,7 @@ pub const MIN_SCORE: i32 = -858_993_459; // negative infinity; see alignment/pai
 pub type POAGraph = Graph<u8, i32, Directed, usize>;
 use std::simd::{i16x8, Simd};
 use std::simd::cmp::SimdOrd;
+use std::simd::cmp::SimdPartialOrd;
 use std::collections::HashMap;
 
 // Unlike with a total order we may have arbitrary successors in the
@@ -414,6 +415,7 @@ impl Poa {
 
     pub fn custom_simd(&mut self, query: &Vec<u8>) {
         println!("simd");
+        let imin = i16::MIN;
         // profile the query and what not
         let mut hash_table = HashMap::new();
         hash_table.insert(65, 0);
@@ -425,7 +427,7 @@ impl Poa {
         let gap_open_score = self.gap_open_score as i16;
         let gap_open_8 = i16x8::from_array([gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score]);
         let left_mask_1 = i16x8::from_array([0, 1, 1, 1, 1, 1, 1, 1]);
-        let left_mask_1_neg = i16x8::from_array([i16::MIN, 1, 1, 1, 1, 1, 1, 1]);
+        let mask_array = vec![i16x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]), i16x8::from_array([0, 1, 0, 0, 0, 0, 0, 0]), i16x8::from_array([0, 0, 1, 0, 0, 0, 0, 0]), i16x8::from_array([0, 0, 0, 1, 0, 0, 0, 0]), i16x8::from_array([0, 0, 0, 0, 1, 0, 0, 0]), i16x8::from_array([0, 0, 0, 0, 0, 1, 0, 0]), i16x8::from_array([0, 0, 0, 0, 0, 0, 1, 0]), i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 1])];
         let right_mask_7 = i16x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]);
         assert!(self.graph.node_count() != 0);
         // dimensions of the traceback matrix
@@ -468,11 +470,11 @@ impl Poa {
             // vertical and diagonal
             for prev_node in &prevs {
                 let i_p: usize = prev_node.index(); // index of previous node
-                println!("S");
+                //println!("S");
                 let mut X = i16x8::from_array([(index) * -gap_open_score, 0, 0, 0, 0, 0, 0, 0]);
                 for simd_index in 0..num_seq_vec {
                     let mut H_prev = HH[i_p][simd_index].clone();
-                    println!("H_prev {:?}", H_prev);
+                    //println!("H_prev {:?}", H_prev);
                     let mut H_curr;
                     // when no prevs, start
                     if i_p == i {
@@ -483,17 +485,17 @@ impl Poa {
                     }
                     let mut E = HH[i_p][simd_index].clone() - gap_open_8;
                     let MM_simd = MM_simd_full[*data_base_index][simd_index];
-                    println!("MM simd {:?}", MM_simd);
+                    //println!("MM simd {:?}", MM_simd);
                     // need to define T2 as H cannot be modified here
                     let T1 = H_prev.rotate_elements_left::<7>() * right_mask_7;
                     let mut T2 = (H_prev.rotate_elements_right::<1>() * left_mask_1) + X;
-                    println!("X {:?}", X);
+                    //println!("X {:?}", X);
                     X = T1;
                     // match score added
-                    println!("T2 {:?}", T2);
+                    //println!("T2 {:?}", T2);
                     T2 = T2 + MM_simd;
                     
-                    println!("E {:?}", E);
+                    //println!("E {:?}", E);
                     // diagonal or horizontal
                     H_curr = H_curr.simd_max(T2);
                     H_curr = H_curr.simd_max(E);
@@ -503,23 +505,34 @@ impl Poa {
             // horizontal NEeds fixing
             for simd_index in 0..num_seq_vec {
                 let mut H = HH[i][simd_index].clone();
-                println!("H after ver {:?}", H);
+                //println!("H after ver {:?}", H);
+                //F = F - gap_open_8;
                 F = F.rotate_elements_left::<7>() * right_mask_7;
-                F = (H.rotate_elements_right::<1>() * left_mask_1) + F + gap_open_8;
-                println!("F before {:?}", F);
-                let mut T3 = F;
+                //println!("F before {:?}", F);
+                let mut T3 = F.clone();
+                // check if H is greater than F, no change required
+                // if not go through each element and select the max
+                let mut max_vec = [0, 0, 0, 0, 0, 0, 0, 0];
                 for _iter in 0..8 {
                     // lshift 2 t2, for gap extends
-                    T3 = T3.rotate_elements_right::<1>() * left_mask_1_neg;
-                    F = F.simd_max(T3);
+                    T3 = (T3 - gap_open_8) * mask_array[_iter];
+                    T3 = T3.simd_max(H * mask_array[_iter]);
+                    //println!("T3 {} {:?}", _iter, T3);
+                    //H = T3.simd_max(H);
+                    max_vec[_iter] = T3[_iter];
+                    T3 = (T3).rotate_elements_right::<1>();
                 }
+                //println!("max vec {:?}", max_vec);
+                HH[i][simd_index] = i16x8::from_array(max_vec);
+                F = HH[i][simd_index];
                 // make simd of gap open gap extend 
                 
-                F = F ;
+                //F = F ;
                 
-                H = H.simd_max(F);
-                F = H;
-                HH[i][simd_index] = H;
+                //H = H.simd_max(F);
+                //F = H;
+                //HH[i][simd_index] = H;
+                
                 print!("{:?}", HH[i][simd_index]);
             }
             println!("");
