@@ -360,7 +360,7 @@ impl Poa {
     }
 
     pub fn profile_query (seq_y: &Vec<u8>, match_score: i32, mismatch_score: i32) -> Vec<Vec<i16x8>> {
-        let num_seq_vec = seq_y.len() / 8;
+        let num_seq_vec = (seq_y.len() as f64 / 8.0).ceil() as usize;
         let mut MM_simd = vec![];
         // make 4 vectors for query
         let mut A_simd: Vec<i16x8> = vec![];
@@ -373,31 +373,51 @@ impl Poa {
             let mut temp_C = vec![];
             let mut temp_G = vec![];
             let mut temp_T = vec![];
-            let simd_seq = &seq_y[(index_simd * 8)..((index_simd + 1) * 8)];
+            let simd_seq: Vec<u8>;
+            if index_simd + 8 > seq_y.len() {
+                let mut temp_vec: Vec<u8> = seq_y[(index_simd * 8)..(index_simd * 8 + (num_seq_vec % 8))].to_vec();
+                temp_vec.extend(std::iter::repeat(0).take(8 - temp_vec.len()));
+                simd_seq = temp_vec;
+            }
+            else {
+                simd_seq = seq_y[(index_simd * 8)..((index_simd + 1) * 8)].to_vec();
+            }
             for base in simd_seq {
-                if *base == 65 {
+                if base == 65 {
                     temp_A.push(match_score as i16);
                 }
-                else {
+                else if base != 0 {
                     temp_A.push(mismatch_score as i16);
                 }
-                if *base == 67 {
+                else {
+                    temp_A.push(i16::MIN)
+                }
+                if base == 67 {
                     temp_C.push(match_score as i16);
                 }
-                else {
+                else if base != 0 {
                     temp_C.push(mismatch_score as i16);
                 }
-                if *base == 71 {
+                else {
+                    temp_C.push(i16::MIN)
+                }
+                if base == 71 {
                     temp_G.push(match_score as i16);
                 }
-                else {
+                else if base != 0 {
                     temp_G.push(mismatch_score as i16);
                 }
-                if *base == 84 {
+                else {
+                    temp_G.push(i16::MIN)
+                }
+                if base == 84 {
                     temp_T.push(match_score as i16);
                 }
-                else {
+                else if base != 0 {
                     temp_T.push(mismatch_score as i16);
+                }
+                else {
+                    temp_T.push(i16::MIN)
                 }
             }
             A_simd.push(i16x8::from_array(temp_A[0..8].try_into().expect("")));
@@ -415,7 +435,6 @@ impl Poa {
 
     pub fn custom_simd(&mut self, query: &Vec<u8>) {
         println!("simd");
-        let imin = i16::MIN;
         // profile the query and what not
         let mut hash_table = HashMap::new();
         hash_table.insert(65, 0);
@@ -424,7 +443,7 @@ impl Poa {
         hash_table.insert(84, 3);
         let MM_simd_full = Poa::profile_query(query, self.match_score, self.mismatch_score);
         // other simd stuff required
-        let gap_open_score = self.gap_open_score as i16;
+        let gap_open_score = -self.gap_open_score as i16;
         let gap_open_8 = i16x8::from_array([gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score]);
         let left_mask_1 = i16x8::from_array([0, 1, 1, 1, 1, 1, 1, 1]);
         let mask_array = vec![i16x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]), i16x8::from_array([0, 1, 0, 0, 0, 0, 0, 0]), i16x8::from_array([0, 0, 1, 0, 0, 0, 0, 0]), i16x8::from_array([0, 0, 0, 1, 0, 0, 0, 0]), i16x8::from_array([0, 0, 0, 0, 1, 0, 0, 0]), i16x8::from_array([0, 0, 0, 0, 0, 1, 0, 0]), i16x8::from_array([0, 0, 0, 0, 0, 0, 1, 0]), i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 1])];
@@ -454,9 +473,7 @@ impl Poa {
         let mut index = 0;
         let mut topo = Topo::new(&self.graph);
         while let Some(node) = topo.next(&self.graph) {
-            
             let mut F = i16x8::from_array([0, 0, 0, 0, 0, 0, 0, (index + 1) * -gap_open_score]);
-            
             // reference base and index
             let r = self.graph.raw_nodes()[node.index()].weight;
             let i = node.index(); // 0 index is for initialization so we start at 1
@@ -510,8 +527,6 @@ impl Poa {
                 F = F.rotate_elements_left::<7>() * right_mask_7;
                 //println!("F before {:?}", F);
                 let mut T3 = F.clone();
-                // check if H is greater than F, no change required
-                // if not go through each element and select the max
                 let mut max_vec = [0, 0, 0, 0, 0, 0, 0, 0];
                 for _iter in 0..8 {
                     // lshift 2 t2, for gap extends
@@ -525,14 +540,6 @@ impl Poa {
                 //println!("max vec {:?}", max_vec);
                 HH[i][simd_index] = i16x8::from_array(max_vec);
                 F = HH[i][simd_index];
-                // make simd of gap open gap extend 
-                
-                //F = F ;
-                
-                //H = H.simd_max(F);
-                //F = H;
-                //HH[i][simd_index] = H;
-                
                 print!("{:?}", HH[i][simd_index]);
             }
             println!("");
