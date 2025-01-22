@@ -374,8 +374,8 @@ impl Poa {
             let mut temp_G = vec![];
             let mut temp_T = vec![];
             let simd_seq: Vec<u8>;
-            if index_simd + 8 > seq_y.len() {
-                let mut temp_vec: Vec<u8> = seq_y[(index_simd * 8)..(index_simd * 8 + (num_seq_vec % 8))].to_vec();
+            if (index_simd * 8) + 8 > seq_y.len() {
+                let mut temp_vec: Vec<u8> = seq_y[(index_simd * 8)..seq_y.len()].to_vec();
                 temp_vec.extend(std::iter::repeat(0).take(8 - temp_vec.len()));
                 simd_seq = temp_vec;
             }
@@ -390,7 +390,7 @@ impl Poa {
                     temp_A.push(mismatch_score as i16);
                 }
                 else {
-                    temp_A.push(i16::MIN)
+                    temp_A.push(0)
                 }
                 if base == 67 {
                     temp_C.push(match_score as i16);
@@ -399,7 +399,7 @@ impl Poa {
                     temp_C.push(mismatch_score as i16);
                 }
                 else {
-                    temp_C.push(i16::MIN)
+                    temp_C.push(0)
                 }
                 if base == 71 {
                     temp_G.push(match_score as i16);
@@ -408,7 +408,7 @@ impl Poa {
                     temp_G.push(mismatch_score as i16);
                 }
                 else {
-                    temp_G.push(i16::MIN)
+                    temp_G.push(0)
                 }
                 if base == 84 {
                     temp_T.push(match_score as i16);
@@ -417,14 +417,13 @@ impl Poa {
                     temp_T.push(mismatch_score as i16);
                 }
                 else {
-                    temp_T.push(i16::MIN)
+                    temp_T.push(0)
                 }
             }
             A_simd.push(i16x8::from_array(temp_A[0..8].try_into().expect("")));
             C_simd.push(i16x8::from_array(temp_C[0..8].try_into().expect("")));
             G_simd.push(i16x8::from_array(temp_G[0..8].try_into().expect("")));
             T_simd.push(i16x8::from_array(temp_T[0..8].try_into().expect("")));
-            //println!("{:?}", simd_seq);
         }
         MM_simd.push(A_simd);
         MM_simd.push(C_simd);
@@ -452,7 +451,7 @@ impl Poa {
         // dimensions of the traceback matrix
         let (m, n) = (self.graph.node_count(), query.len());
         println!("query.len() {}", query.len());
-        let num_seq_vec = query.len() / 8;
+        let num_seq_vec = (query.len() as f64 / 8.0).ceil() as usize;
         let mut HH: Vec<Vec<i16x8>> = vec![];
         //initialize HH with simd vecs, HH is used as traceback
         for i in 0..m {
@@ -472,11 +471,14 @@ impl Poa {
         // construct the score matrix (O(n^2) space)
         let mut index = 0;
         let mut topo = Topo::new(&self.graph);
+        // required stuff for backtrace
+        let mut last_node= 0;
         while let Some(node) = topo.next(&self.graph) {
             let mut F = i16x8::from_array([0, 0, 0, 0, 0, 0, 0, (index + 1) * -gap_open_score]);
             // reference base and index
             let r = self.graph.raw_nodes()[node.index()].weight;
             let i = node.index(); // 0 index is for initialization so we start at 1
+            last_node = i;
             let data_base_index = hash_table.get(&r).unwrap();
             // iterate over the predecessors of this node
             let mut prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(node, Incoming).collect();
@@ -519,7 +521,7 @@ impl Poa {
                     HH[i][simd_index] = H_curr;
                 }
             }
-            // horizontal NEeds fixing
+            // horizontal NEeds fixing, fixed i guess
             for simd_index in 0..num_seq_vec {
                 let mut H = HH[i][simd_index].clone();
                 //println!("H after ver {:?}", H);
@@ -528,13 +530,13 @@ impl Poa {
                 //println!("F before {:?}", F);
                 let mut T3 = F.clone();
                 let mut max_vec = [0, 0, 0, 0, 0, 0, 0, 0];
-                for _iter in 0..8 {
+                for iter in 0..8 {
                     // lshift 2 t2, for gap extends
-                    T3 = (T3 - gap_open_8) * mask_array[_iter];
-                    T3 = T3.simd_max(H * mask_array[_iter]);
+                    T3 = (T3 - gap_open_8) * mask_array[iter];
+                    T3 = T3.simd_max(H * mask_array[iter]);
                     //println!("T3 {} {:?}", _iter, T3);
                     //H = T3.simd_max(H);
-                    max_vec[_iter] = T3[_iter];
+                    max_vec[iter] = T3[iter];
                     T3 = (T3).rotate_elements_right::<1>();
                 }
                 //println!("max vec {:?}", max_vec);
@@ -544,8 +546,65 @@ impl Poa {
             }
             println!("");
             index += 1;
+        }
+        // Get the alignment by backtracking and recalculating and stuff
+        let mut ops: Vec<AlignmentOperation> = vec![];
+        // loop until we reach a node with no incoming
+        let mut current_node = last_node;
+        let mut current_query = query.len();
+        loop {
+            let mut current_alignment_operation;
+            let mut curent_max_score= i16::MIN;
+            //check the score ins left of query
+            let prev_simd_index = (current_query - 1) / 8;
+            let prev_simd_inner_index = (current_query - 1) % 8;
+
+            let simd_index = (current_query) / 8;
+            let simd_inner_index = (current_query) % 8;
+
+            curent_max_score = HH[current_node][prev_simd_index][prev_simd_inner_index];
+            print!("left {} ", curent_max_score);
+            current_alignment_operation = AlignmentOperation::Ins(Some(current_node));
+            let mut next_jump = current_query - 1;
+            let mut next_node = current_node;
+
+            // check the top and diagonal scores
+            let mut prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_node), Incoming).collect();
+            for prev in &prevs {
+                let i_p = prev.index();
+                // top score
+                print!("top {} ", HH[i_p][simd_index][simd_inner_index]);
+                if HH[i_p][simd_index][simd_inner_index] > curent_max_score {
+                    curent_max_score = HH[i_p][simd_index][simd_inner_index];
+                    current_alignment_operation = AlignmentOperation::Del(None);
+                    next_jump = current_query;
+                    next_node = i_p;
+                }
+                // diagonal score
+                print!("diagonal {} ", HH[i_p][prev_simd_index][prev_simd_inner_index]);
+                if HH[i_p][prev_simd_index][prev_simd_inner_index] > curent_max_score {
+                    curent_max_score = HH[i_p][prev_simd_index][prev_simd_inner_index];
+                    current_alignment_operation = AlignmentOperation::Match(Some((i_p, current_node)));
+                    next_jump = current_query - 1;
+                    next_node = i_p;
+                }
+            }
+            println!("current score {}", curent_max_score);
+            ops.push(current_alignment_operation);
+            
+            // iterate to next
+            current_query = next_jump;
+            current_node = next_node;
+            // break point
+            if prevs.len() == 0 || current_query == 0 {
+                break;
+            }
+        }
+        for op in ops {
+            println!("{:?}", op);
+        }
+
     }
-}
 
     pub fn custom(&mut self, query: &Vec<u8>) -> Traceback {
         println!("Non simd");
