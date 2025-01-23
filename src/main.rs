@@ -6,6 +6,7 @@ use pairwise::*;
 use poa::*;
 use std::simd::{u16x4, Simd};
 use std::time::Instant;
+use petgraph::dot::Dot;
 
 fn main() {
     let seq_x = vec![65, 65, 84, 65, 65, 84, 65, 65];
@@ -28,8 +29,10 @@ fn main() {
     let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs_bytes[0]);
     let now = Instant::now();
     for seq in seqs_bytes.iter().skip(1) {
-        aligner.global(seq);
+        aligner.global(seq).add_to_graph();
     }
+    let graph = aligner.graph();
+    println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
     let time = now.elapsed().as_micros() as usize;
     println!("Completed normal poa elapsed time {}μs", time);
 
@@ -43,7 +46,8 @@ fn main() {
     for seq in seqs_bytes.iter().skip(1) {
         aligner.global_simd(seq);
     }
-    
+    let graph = aligner.graph();
+    println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
     let time = now.elapsed().as_micros() as usize;
     println!("Completed simd poa elapsed time {}μs", time);
 }

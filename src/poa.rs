@@ -278,7 +278,8 @@ impl Aligner {
     }
     pub fn global_simd(&mut self, query: &Vec<u8>) -> &mut Self {
         self.query = query.to_vec();
-        self.poa.custom_simd(query);
+        let alignment = self.poa.custom_simd(query);
+        self.poa.add_alignment(&alignment, &self.query);
         self
     }
     /// Return alignment graph.
@@ -432,7 +433,7 @@ impl Poa {
         MM_simd
     }
 
-    pub fn custom_simd(&mut self, query: &Vec<u8>) {
+    pub fn custom_simd(&mut self, query: &Vec<u8>) -> Alignment {
         println!("simd");
         // profile the query and what not
         let mut hash_table = HashMap::new();
@@ -551,10 +552,10 @@ impl Poa {
         let mut ops: Vec<AlignmentOperation> = vec![];
         // loop until we reach a node with no incoming
         let mut current_node = last_node;
-        let mut current_query = query.len();
+        let mut current_query = query.len() - 1;
+        println!("query len {}", current_query);
         loop {
-            let mut current_alignment_operation;
-            let mut curent_max_score= i16::MIN;
+            let mut current_alignment_operation = AlignmentOperation::Match(None);
             //check the score ins left of query
             let prev_simd_index = (current_query - 1) / 8;
             let prev_simd_inner_index = (current_query - 1) % 8;
@@ -562,48 +563,59 @@ impl Poa {
             let simd_index = (current_query) / 8;
             let simd_inner_index = (current_query) % 8;
 
-            curent_max_score = HH[current_node][prev_simd_index][prev_simd_inner_index];
-            print!("left {} ", curent_max_score);
-            current_alignment_operation = AlignmentOperation::Ins(Some(current_node));
-            let mut next_jump = current_query - 1;
-            let mut next_node = current_node;
-
-            // check the top and diagonal scores
-            let mut prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_node), Incoming).collect();
-            for prev in &prevs {
-                let i_p = prev.index();
-                // top score
-                print!("top {} ", HH[i_p][simd_index][simd_inner_index]);
-                if HH[i_p][simd_index][simd_inner_index] > curent_max_score {
-                    curent_max_score = HH[i_p][simd_index][simd_inner_index];
-                    current_alignment_operation = AlignmentOperation::Del(None);
-                    next_jump = current_query;
-                    next_node = i_p;
-                }
-                // diagonal score
-                print!("diagonal {} ", HH[i_p][prev_simd_index][prev_simd_inner_index]);
-                if HH[i_p][prev_simd_index][prev_simd_inner_index] > curent_max_score {
-                    curent_max_score = HH[i_p][prev_simd_index][prev_simd_inner_index];
-                    current_alignment_operation = AlignmentOperation::Match(Some((i_p, current_node)));
-                    next_jump = current_query - 1;
-                    next_node = i_p;
+            let current_cell_score = HH[current_node][simd_index][simd_inner_index];
+            let mut next_jump = 0;
+            let mut next_node = 0;
+            // check left if gap open difference with left
+            let prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_node), Incoming).collect();
+            if current_cell_score == HH[current_node][prev_simd_index][prev_simd_inner_index] - gap_open_score {
+                current_alignment_operation = AlignmentOperation::Ins(Some(current_node));
+                next_jump = current_query - 1;
+                next_node = current_node;
+            }
+            else {
+                for prev in &prevs {
+                    let i_p = prev.index();
+                    // Top
+                    print!("top {} ", HH[i_p][simd_index][simd_inner_index]);
+                    if current_cell_score == HH[i_p][simd_index][simd_inner_index] - gap_open_score {
+                        current_alignment_operation = AlignmentOperation::Del(None);
+                        next_jump = current_query;
+                        next_node = i_p;
+                    }
+                    // Diagonal
+                    else if (current_cell_score == HH[i_p][prev_simd_index][prev_simd_inner_index] + self.match_score as i16) || (current_cell_score == HH[i_p][prev_simd_index][prev_simd_inner_index] + self.mismatch_score as i16) {
+                        current_alignment_operation = AlignmentOperation::Match(Some((i_p, current_node)));
+                        next_jump = current_query - 1;
+                        next_node = i_p;
+                    }
                 }
             }
-            println!("current score {}", curent_max_score);
             ops.push(current_alignment_operation);
-            
             // iterate to next
             current_query = next_jump;
             current_node = next_node;
             // break point
             if prevs.len() == 0 || current_query == 0 {
+                //if at end but not at start of query add bunch of ins(None)
+                if current_query > 0 {
+                    for _ in 0..current_query {
+                        ops.push(AlignmentOperation::Ins(None));
+                    }
+                }
+                ops.push(AlignmentOperation::Match(None));
+                //if at start of query but previous stuff available add bunch of del, this really doesnt matter though
                 break;
             }
         }
-        for op in ops {
+        ops.reverse();
+        for op in &ops {
             println!("{:?}", op);
         }
-
+        Alignment {
+            score: 100,
+            operations: ops
+        }
     }
 
     pub fn custom(&mut self, query: &Vec<u8>) -> Traceback {
@@ -690,8 +702,8 @@ impl Poa {
             }
         }
         // print the matrix here
-        for i in 0..m {
-            for j in 0..n {
+        for i in 0..m + 1 {
+            for j in 0..n + 1 {
                 print!(" {}", traceback.get(i, j). score);
             }
             println!("");
