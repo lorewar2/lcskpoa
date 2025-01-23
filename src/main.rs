@@ -2,52 +2,110 @@
 #![allow(dead_code)]
 mod poa;
 mod pairwise;
-use pairwise::*;
 use poa::*;
-use std::simd::{u16x4, Simd};
 use std::time::Instant;
 use petgraph::dot::Dot;
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 fn main() {
-    let seq_x = vec![65, 65, 84, 65, 65, 84, 65, 65];
-    let seq_y = vec![65, 65, 84, 65, 65, 84, 65, 65];
     let match_score = 1;
     let mismatch_score = -1;
     let gap_open_score = 2;
-    let gap_extend_score = 1;
-    //pairwise_simd_without_extend (&seq_x, &seq_y, match_score, mismatch_score, gap_open_score, gap_extend_score);
-    //pairwise_without_extend(&seq_x, &seq_y, match_score, mismatch_score, -gap_open_score, -gap_extend_score);
-    //fake_pairwise_simd(&seq_x, &seq_y, match_score, mismatch_score, gap_open_score, gap_extend_score);
-    //pairwise(&seq_x, &seq_y, match_score, mismatch_score, -gap_open_score, -gap_extend_score, 10);
-    // nw for now
-    // test poa simple here
-    let seqs = vec!["TCTTTCTC".to_string(), "TTCTTTCCC".to_string()];
-    let mut seqs_bytes = vec![];
-    for seq in seqs.iter() {
-        seqs_bytes.push(seq.to_string().bytes().collect::<Vec<u8>>());
+    for seed in 0..10 {
+        let seqs = get_random_sequences_from_generator(10, 3, seed);
+        let mut seqs_bytes = vec![];
+        for seq in seqs.iter() {
+            seqs_bytes.push(seq.to_string().bytes().collect::<Vec<u8>>());
+        }
+        let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs_bytes[0]);
+        let now = Instant::now();
+        for seq in seqs_bytes.iter().skip(1) {
+            aligner.global(seq).add_to_graph();
+        }
+        let graph = aligner.graph();
+        println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
+        let time = now.elapsed().as_micros() as usize;
+        println!("Completed normal poa elapsed time {}μs", time);
+        let mut seqs_bytes = vec![];
+        for seq in seqs.iter() {
+            seqs_bytes.push(seq.to_string().bytes().collect::<Vec<u8>>());
+        }
+        let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs_bytes[0]);
+        let now = Instant::now();
+        for seq in seqs_bytes.iter().skip(1) {
+            aligner.global_simd(seq);
+        }
+        let graph = aligner.graph();
+        println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
+        let time = now.elapsed().as_micros() as usize;
+        println!("Completed simd poa elapsed time {}μs", time);
     }
-    let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs_bytes[0]);
-    let now = Instant::now();
-    for seq in seqs_bytes.iter().skip(1) {
-        aligner.global(seq).add_to_graph();
-    }
-    let graph = aligner.graph();
-    println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
-    let time = now.elapsed().as_micros() as usize;
-    println!("Completed normal poa elapsed time {}μs", time);
+    
+}
 
-    let seqs = vec!["TCTTTCTC".to_string(), "TTCTTTCCC".to_string()];
-    let mut seqs_bytes = vec![];
-    for seq in seqs.iter() {
-        seqs_bytes.push(seq.to_string().bytes().collect::<Vec<u8>>());
+fn get_random_sequences_from_generator(sequence_length: usize, num_of_sequences: usize, seed: usize) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed as u64);
+    //vector to save all the sequences 
+    let mut randomvec: Vec<String> = vec![];
+    //generate the first sequence of random bases of length sequence_length
+    let mut firstseq: Vec<char> = vec![];
+    for _ in 0..sequence_length {
+        firstseq.push(match rng.gen_range(0..4) {
+            0 => 'A',
+            1 => 'C',
+            2 => 'G',
+            3 => 'T',
+            _ => 'X'
+        });
     }
-    let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs_bytes[0]);
-    let now = Instant::now();
-    for seq in seqs_bytes.iter().skip(1) {
-        aligner.global_simd(seq);
+    //randomvec.push(firstseq.iter().collect::<String>());
+    //loop for 10 
+    for _ in 0..num_of_sequences {
+        //clone the sequence
+        let mut mutseq = firstseq.clone();
+        //mutate the all the bases with 0.05 chance
+        for i in 0..mutseq.len() {
+            match rng.gen_range(0..20) {
+                0 => {
+                    mutseq[i] = match rng.gen_range(0..4) {
+                        0 => 'A',
+                        1 => 'C',
+                        2 => 'G',
+                        3 => 'T',
+                        _ => 'X'
+                    }
+                },
+                _ => {}
+            }
+        }
+        //put indels at location with chance 0.1 
+        for i in 0..mutseq.len() {
+            let mean_value: f64 = 1.5; //2.0 before
+            //get length of the indel geometric distributed mean value 1.5
+            let indel_length: usize  = ((1.0 - rng.gen::<f64>()).ln() / (1.00 - (1.00 / mean_value) as f64).ln()).ceil() as usize;
+            match rng.gen_range(0..20) {
+                //insertion of elements
+                0 => {
+                    if i + indel_length < mutseq.len() {
+                        for _ in 0..indel_length{
+                            mutseq.insert(i + 1, mutseq[i]);
+                        }
+                    }
+                },
+                //deletion of elements
+                1 => {
+                    if i + indel_length < mutseq.len() {
+                        for _ in 0..indel_length{
+                            mutseq.remove(i);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        //println!("{:?}", mutseq.iter().collect::<String>());
+        //insert to vector
+        randomvec.push(mutseq.iter().collect::<String>());
     }
-    let graph = aligner.graph();
-    println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
-    let time = now.elapsed().as_micros() as usize;
-    println!("Completed simd poa elapsed time {}μs", time);
+    randomvec
 }

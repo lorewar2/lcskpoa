@@ -498,7 +498,7 @@ impl Poa {
                     let mut H_curr;
                     // when no prevs, start
                     if i_p == i {
-                        H_curr = i16x8::from_array([i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN]);
+                        H_curr = i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]); // was i16::Min * 8
                     }
                     else {
                         H_curr = HH[i][simd_index].clone();
@@ -548,7 +548,7 @@ impl Poa {
             println!("");
             index += 1;
         }
-        // Get the alignment by backtracking and recalculating and stuff
+        // Get the alignment by backtracking and recalculating stuff
         let mut ops: Vec<AlignmentOperation> = vec![];
         // loop until we reach a node with no incoming
         let mut current_node = last_node;
