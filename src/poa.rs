@@ -5,9 +5,8 @@ use petgraph::visit::Topo;
 use petgraph::{Directed, Graph, Incoming};
 pub const MIN_SCORE: i32 = -858_993_459; // negative infinity; see alignment/pairwise/mod.rs
 pub type POAGraph = Graph<u8, i32, Directed, usize>;
-use std::simd::{i16x8, Simd};
+use std::simd::i16x8;
 use std::simd::cmp::SimdOrd;
-use std::simd::cmp::SimdPartialOrd;
 use std::collections::HashMap;
 
 // Unlike with a total order we may have arbitrary successors in the
@@ -187,7 +186,7 @@ impl Traceback {
         // Now backtrack through the matrix to construct an optimal path
         let mut i = self.last.index() + 1;
         let mut j = self.cols;
-
+        println!("non simd score: {}", self.get(i, j).score);
         while i > 0 || j > 0 {
             // push operation and edge corresponding to (one of the) optimal
             // routes
@@ -196,37 +195,37 @@ impl Traceback {
                 AlignmentOperation::Match(Some((p, _))) => {
                     i = p + 1;
                     j -= 1;
-                    println!("Match");
+                    //println!("Match");
                 }
                 AlignmentOperation::Del(Some((p, _))) => {
                     i = p + 1;
-                    println!("Del");
+                    //println!("Del");
                 }
                 AlignmentOperation::Ins(Some(p)) => {
                     i = p + 1;
                     j -= 1;
-                    println!("Ins");
+                    //println!("Ins");
                 }
                 AlignmentOperation::Match(None) => {
                     i = 0;
                     j -= 1;
-                    println!("Match Non");
+                    //println!("Match Non");
                 }
                 AlignmentOperation::Del(None) => {
                     i -= 1;
-                    println!("Del Non");
+                    //println!("Del Non");
                 }
                 AlignmentOperation::Ins(None) => {
                     j -= 1;
-                    println!("Ins Non");
+                    //println!("Ins Non");
                 }
                 AlignmentOperation::Xclip(r) => {
                     i = r;
-                    println!("X clip");
+                    //println!("X clip");
                 }
                 AlignmentOperation::Yclip(r, _) => {
                     j = r;
-                    println!("Y clip");
+                    //println!("Y clip");
                 }
             }
         }
@@ -434,7 +433,7 @@ impl Poa {
     }
 
     pub fn custom_simd(&mut self, query: &Vec<u8>) -> Alignment {
-        println!("simd");
+        //println!("simd");
         // profile the query and what not
         let mut hash_table = HashMap::new();
         hash_table.insert(65, 0);
@@ -451,19 +450,21 @@ impl Poa {
         assert!(self.graph.node_count() != 0);
         // dimensions of the traceback matrix
         let (m, n) = (self.graph.node_count(), query.len());
-        println!("query.len() {}", query.len());
+        //println!("query.len() {}", query.len());
         let num_seq_vec = (query.len() as f64 / 8.0).ceil() as usize;
         let mut HH: Vec<Vec<i16x8>> = vec![];
         //initialize HH with simd vecs, HH is used as traceback
-        for i in 0..m {
+        for i in 0..m as i16 {
             let mut temp_vec = vec![];
             for j in 0..num_seq_vec as i16 {
+                let gap_open_multiplier = i16x8::from_array([(j * 8) + (1 * (i + 1)), (j * 8) + (2 * (i + 1)), (j * 8) + (3 * (i + 1)), (j * 8) + (4 * (i + 1)), (j * 8) + (5 * (i + 1)), (j * 8) + (6 * (i + 1)), (j * 8) + (1 * (7 + 1)), (j * 8) + (8 * (i + 1))]) * -gap_open_8;
+                temp_vec.push(gap_open_multiplier);
                 if i == 0 {
-                    let gap_open_multiplier = i16x8::from_array([(j * 8) + 1, (j * 8) + 2, (j * 8) + 3, (j * 8) + 4, (j * 8) + 5, (j * 8) + 6, (j * 8) + 7, (j * 8) + 8]) * -gap_open_8;
-                    temp_vec.push(gap_open_multiplier);
+                    //let gap_open_multiplier = i16x8::from_array([(j * 8) + 1, (j * 8) + 2, (j * 8) + 3, (j * 8) + 4, (j * 8) + 5, (j * 8) + 6, (j * 8) + 7, (j * 8) + 8]) * -gap_open_8;
+                    //temp_vec.push(gap_open_multiplier);
                 }
                 else {
-                    temp_vec.push(i16x8::from_array([i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN]));
+                    //temp_vec.push(i16x8::from_array([i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN]));
                 }
             }
             HH.push(temp_vec);
@@ -498,7 +499,7 @@ impl Poa {
                     let mut H_curr;
                     // when no prevs, start
                     if i_p == i {
-                        H_curr = i16x8::from_array([0, 0, 0, 0, 0, 0, 0, 0]); // was i16::Min * 8
+                        H_curr = i16x8::from_array([i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN, i16::MIN]); // was i16::Min * 8
                     }
                     else {
                         H_curr = HH[i][simd_index].clone();
@@ -543,9 +544,9 @@ impl Poa {
                 //println!("max vec {:?}", max_vec);
                 HH[i][simd_index] = i16x8::from_array(max_vec);
                 F = HH[i][simd_index];
-                print!("{:?}", HH[i][simd_index]);
+                //print!("{:?}", HH[i][simd_index]);
             }
-            println!("");
+            //println!("");
             index += 1;
         }
         // Get the alignment by backtracking and recalculating stuff
@@ -553,7 +554,12 @@ impl Poa {
         // loop until we reach a node with no incoming
         let mut current_node = last_node;
         let mut current_query = query.len() - 1;
-        println!("query len {}", current_query);
+
+        let simd_index = (current_query) / 8;
+        let simd_inner_index = (current_query) % 8;
+        let final_score = HH[current_node][simd_index][simd_inner_index];
+        println!("simd score: {}", final_score);
+        //println!("query len {}", current_query);
         loop {
             let mut current_alignment_operation = AlignmentOperation::Match(None);
             //check the score ins left of query
@@ -577,7 +583,7 @@ impl Poa {
                 for prev in &prevs {
                     let i_p = prev.index();
                     // Top
-                    print!("top {} ", HH[i_p][simd_index][simd_inner_index]);
+                    //print!("top {} ", HH[i_p][simd_index][simd_inner_index]);
                     if current_cell_score == HH[i_p][simd_index][simd_inner_index] - gap_open_score {
                         current_alignment_operation = AlignmentOperation::Del(None);
                         next_jump = current_query;
@@ -610,16 +616,16 @@ impl Poa {
         }
         ops.reverse();
         for op in &ops {
-            println!("{:?}", op);
+            //println!("{:?}", op);
         }
         Alignment {
-            score: 100,
+            score: final_score as i32,
             operations: ops
         }
     }
 
     pub fn custom(&mut self, query: &Vec<u8>) -> Traceback {
-        println!("Non simd");
+        //println!("Non simd");
         assert!(self.graph.node_count() != 0);
         // dimensions of the traceback matrix
         let (m, n) = (self.graph.node_count(), query.len());
@@ -704,9 +710,9 @@ impl Poa {
         // print the matrix here
         for i in 0..m + 1 {
             for j in 0..n + 1 {
-                print!(" {}", traceback.get(i, j). score);
+                //print!(" {}", traceback.get(i, j). score);
             }
-            println!("");
+            //println!("");
         }
         //println!("Total {}KB", (total_cell_usage * mem::size_of::<TracebackCell>()) / 1024);
         traceback

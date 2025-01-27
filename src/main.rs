@@ -11,8 +11,8 @@ fn main() {
     let match_score = 1;
     let mismatch_score = -1;
     let gap_open_score = 2;
-    for seed in 0..10 {
-        let seqs = get_random_sequences_from_generator(10, 3, seed);
+    for seed in 0..1 {
+        let seqs = get_random_sequences_from_generator(10000, 10, seed);
         let mut seqs_bytes = vec![];
         for seq in seqs.iter() {
             seqs_bytes.push(seq.to_string().bytes().collect::<Vec<u8>>());
@@ -23,7 +23,7 @@ fn main() {
             aligner.global(seq).add_to_graph();
         }
         let graph = aligner.graph();
-        println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
+        //println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
         let time = now.elapsed().as_micros() as usize;
         println!("Completed normal poa elapsed time {}μs", time);
         let mut seqs_bytes = vec![];
@@ -36,7 +36,7 @@ fn main() {
             aligner.global_simd(seq);
         }
         let graph = aligner.graph();
-        println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
+        //println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
         let time = now.elapsed().as_micros() as usize;
         println!("Completed simd poa elapsed time {}μs", time);
     }
