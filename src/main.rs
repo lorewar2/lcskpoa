@@ -12,7 +12,7 @@ fn main() {
     let mismatch_score = -1;
     let gap_open_score = 2;
     for seed in 0..1 {
-        let seqs = get_random_sequences_from_generator(10000, 10, seed);
+        let seqs = get_random_sequences_from_generator(100, 10, seed);
         let mut seqs_bytes = vec![];
         for seq in seqs.iter() {
             seqs_bytes.push(seq.to_string().bytes().collect::<Vec<u8>>());
