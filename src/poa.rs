@@ -1,4 +1,5 @@
 
+
 use std::cmp::{max, Ordering};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::Topo;
@@ -363,75 +364,33 @@ impl Poa {
     }
 
     pub fn profile_query (seq_y: &Vec<u8>, match_score: i32, mismatch_score: i32) -> Vec<Vec<i32x8>> {
-        let num_seq_vec = (seq_y.len() as f64 / 8.0).ceil() as usize;
-        let mut MM_simd = vec![];
+        let num_seq_vec = (seq_y.len() + 7) / 8;
+        let mut MM_simd = vec![vec![]; 4];
         // make 4 vectors for query
-        let mut A_simd: Vec<i32x8> = vec![];
-        let mut C_simd: Vec<i32x8> = vec![];
-        let mut G_simd: Vec<i32x8> = vec![];
-        let mut T_simd: Vec<i32x8> = vec![];
+        let score_table = [0, mismatch_score];
         // go through the query and populate the entries
         for index_simd in 0..num_seq_vec {
-            let mut temp_A = vec![];
-            let mut temp_C = vec![];
-            let mut temp_G = vec![];
-            let mut temp_T = vec![];
-            let simd_seq: Vec<u8>;
-            if (index_simd * 8) + 8 > seq_y.len() {
-                let mut temp_vec: Vec<u8> = seq_y[(index_simd * 8)..seq_y.len()].to_vec();
-                temp_vec.extend(std::iter::repeat(0).take(8 - temp_vec.len()));
-                simd_seq = temp_vec;
+            let mut temp_A = [0; 8];
+            let mut temp_C = [0; 8];
+            let mut temp_G = [0; 8];
+            let mut temp_T = [0; 8];
+            let start = index_simd * 8;
+            let end = (start + 8).min(seq_y.len());
+            let padded_seq = seq_y[start..end]
+                .iter()
+                .chain(std::iter::repeat(&0))
+                .take(8);
+            for (i, &base) in padded_seq.enumerate() {
+                temp_A[i] = if base == 65 { match_score } else { score_table[(base > 0) as usize] };
+                temp_C[i] = if base == 67 { match_score } else { score_table[(base > 0) as usize] };
+                temp_G[i] = if base == 71 { match_score } else { score_table[(base > 0) as usize] };
+                temp_T[i] = if base == 84 { match_score } else { score_table[(base > 0) as usize] };
             }
-            else {
-                simd_seq = seq_y[(index_simd * 8)..((index_simd + 1) * 8)].to_vec();
-            }
-            for base in simd_seq {
-                if base == 65 {
-                    temp_A.push(match_score as i32);
-                }
-                else if base != 0 {
-                    temp_A.push(mismatch_score as i32);
-                }
-                else {
-                    temp_A.push(0)
-                }
-                if base == 67 {
-                    temp_C.push(match_score as i32);
-                }
-                else if base != 0 {
-                    temp_C.push(mismatch_score as i32);
-                }
-                else {
-                    temp_C.push(0)
-                }
-                if base == 71 {
-                    temp_G.push(match_score as i32);
-                }
-                else if base != 0 {
-                    temp_G.push(mismatch_score as i32);
-                }
-                else {
-                    temp_G.push(0)
-                }
-                if base == 84 {
-                    temp_T.push(match_score as i32);
-                }
-                else if base != 0 {
-                    temp_T.push(mismatch_score as i32);
-                }
-                else {
-                    temp_T.push(0)
-                }
-            }
-            A_simd.push(i32x8::from_array(temp_A[0..8].try_into().expect("")));
-            C_simd.push(i32x8::from_array(temp_C[0..8].try_into().expect("")));
-            G_simd.push(i32x8::from_array(temp_G[0..8].try_into().expect("")));
-            T_simd.push(i32x8::from_array(temp_T[0..8].try_into().expect("")));
+            MM_simd[0].push(i32x8::from_array(temp_A));
+            MM_simd[1].push(i32x8::from_array(temp_C));
+            MM_simd[2].push(i32x8::from_array(temp_G));
+            MM_simd[3].push(i32x8::from_array(temp_T));
         }
-        MM_simd.push(A_simd);
-        MM_simd.push(C_simd);
-        MM_simd.push(G_simd);
-        MM_simd.push(T_simd);
         MM_simd
     }
 
@@ -446,39 +405,41 @@ impl Poa {
         let MM_simd_full = Poa::profile_query(query, self.match_score, self.mismatch_score);
         // other simd stuff required
         let gap_open_score = -self.gap_open_score as i32;
-        let gap_open_8 = i32x8::from_array([gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score, gap_open_score]);
+        let gap_open_8 = i32x8::splat(gap_open_score);
+        let zero_8 = i32x8::splat(0);
+        let min_score_8 = i32x8::splat(MIN_SCORE);
         let left_mask_1 = i32x8::from_array([0, 1, 1, 1, 1, 1, 1, 1]);
-        let mask_array = vec![i32x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]), i32x8::from_array([0, 1, 0, 0, 0, 0, 0, 0]), i32x8::from_array([0, 0, 1, 0, 0, 0, 0, 0]), i32x8::from_array([0, 0, 0, 1, 0, 0, 0, 0]), i32x8::from_array([0, 0, 0, 0, 1, 0, 0, 0]), i32x8::from_array([0, 0, 0, 0, 0, 1, 0, 0]), i32x8::from_array([0, 0, 0, 0, 0, 0, 1, 0]), i32x8::from_array([0, 0, 0, 0, 0, 0, 0, 1])];
+        //let mask_array = vec![i32x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]), i32x8::from_array([0, 1, 0, 0, 0, 0, 0, 0]), i32x8::from_array([0, 0, 1, 0, 0, 0, 0, 0]), i32x8::from_array([0, 0, 0, 1, 0, 0, 0, 0]), i32x8::from_array([0, 0, 0, 0, 1, 0, 0, 0]), i32x8::from_array([0, 0, 0, 0, 0, 1, 0, 0]), i32x8::from_array([0, 0, 0, 0, 0, 0, 1, 0]), i32x8::from_array([0, 0, 0, 0, 0, 0, 0, 1])];
         let right_mask_7 = i32x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]);
         assert!(self.graph.node_count() != 0);
         // dimensions of the traceback matrix
         let (m, n) = (self.graph.node_count(), query.len());
         //println!("query.len() {}", query.len());
-        let num_seq_vec = (query.len() as f64 / 8.0).ceil() as usize;
-
-        
+        let num_seq_vec = (n as f64 / 8.0).ceil() as usize;
         //initialize HH with simd vecs, HH is used as traceback
-        let mut HH = Vec::with_capacity(m as usize); 
+        let mut HH: Vec<Vec<i32x8>> = Vec::with_capacity(m);
         let gap_multiplier = i32x8::from_array([1, 2, 3, 4, 5, 6, 7, 8]);
         for i in 0..m {
-            let mut temp_vec = Vec::with_capacity(num_seq_vec as usize); 
-            let i_offset = i32x8::splat((i + 1) as i32); 
-            let gap_offset = gap_multiplier * i_offset; 
-            for j in 0..num_seq_vec {
-                let base_offset = (j * 8) as i32;
-                let gap_open_multiplier = (gap_offset + i32x8::splat(base_offset)) * -gap_open_8;
-                temp_vec.push(gap_open_multiplier);
+            if i == 0 {
+                // Initialize the first row with gap open multipliers
+                HH.push((0..num_seq_vec).map(|j| {
+                    let base_offset = (j * 8) as i32;
+                    (gap_multiplier + i32x8::splat(base_offset)) * -gap_open_8
+                }).collect());
+            } else {
+                // Initialize other rows with MIN_SCORE
+                HH.push(vec![min_score_8; num_seq_vec]);
             }
-            HH.push(temp_vec); // Push temp_vec to HH
         }
-
         // construct the score matrix (O(n^2) space)
         let mut index = 0;
         let mut topo = Topo::new(&self.graph);
         // required stuff for backtrace
         let mut last_node= 0;
         while let Some(node) = topo.next(&self.graph) {
-            let mut F = i32x8::from_array([0, 0, 0, 0, 0, 0, 0, (index + 1) * -gap_open_score]);
+            //let mut F = i32x8::from_array([0, 0, 0, 0, 0, 0, 0, (index + 1) * -gap_open_score]);
+            let mut F = zero_8;
+            F[7] = (index + 1) * -gap_open_score;
             // reference base and index
             let r = self.graph.raw_nodes()[node.index()].weight;
             let i = node.index(); // 0 index is for initialization so we start at 1
@@ -494,19 +455,21 @@ impl Poa {
             for prev_node in &prevs {
                 let i_p: usize = prev_node.index(); // index of previous node
                 //println!("S");
-                let mut X = i32x8::from_array([(index) * -gap_open_score, 0, 0, 0, 0, 0, 0, 0]);
+                //let mut X = i32x8::from_array([(index) * -gap_open_score, 0, 0, 0, 0, 0, 0, 0]);
+                let mut X = zero_8;
+                X[0] = (index) * -gap_open_score;
                 for simd_index in 0..num_seq_vec {
-                    let mut H_prev = HH[i_p][simd_index].clone();
+                    let mut H_prev = HH[i_p][simd_index];
                     //println!("H_prev {:?}", H_prev);
                     let mut H_curr;
                     // when no prevs, start
                     if i_p == i {
-                        H_curr = i32x8::from_array([i32::MIN, i32::MIN, i32::MIN, i32::MIN, i32::MIN, i32::MIN, i32::MIN, i32::MIN]); // was i16::Min * 8
+                        H_curr = min_score_8; // was i16::Min * 8
                     }
                     else {
-                        H_curr = HH[i][simd_index].clone();
+                        H_curr = HH[i][simd_index];
                     }
-                    let mut E = HH[i_p][simd_index].clone() - gap_open_8;
+                    let E = HH[i_p][simd_index] - gap_open_8;
                     let MM_simd = MM_simd_full[*data_base_index][simd_index];
                     //println!("MM simd {:?}", MM_simd);
                     // need to define T2 as H cannot be modified here
@@ -527,14 +490,14 @@ impl Poa {
             }
             // horizontal NEeds fixing, non simd is faster here
             for simd_index in 0..num_seq_vec {
-                let H = HH[i][simd_index].clone().to_array();
+                let H = HH[i][simd_index];
                 //println!("H after ver {:?}", H);
                 //F = F - gap_open_8;
                 //F = F.rotate_elements_left::<7>() * right_mask_7;
                 //println!("F before {:?}", F);
                 //let mut T3 = F.clone();
                 let mut T3 = F[7];
-                let mut max_vec = [0, 0, 0, 0, 0, 0, 0, 0];
+                let mut max_vec = zero_8;
                 for iter in 0..8 {
                     let temp = H[iter];
                     // lshift 2 t2, for gap extends
@@ -550,7 +513,7 @@ impl Poa {
                     //T3 = (T3).rotate_elements_right::<1>();
                 }
                 //println!("max vec {:?}", max_vec);
-                HH[i][simd_index] = i32x8::from_array(max_vec);
+                HH[i][simd_index] = max_vec;
                 F = HH[i][simd_index];
                 //print!("{:?}", HH[i][simd_index]);
             }
@@ -561,7 +524,7 @@ impl Poa {
         let mut ops: Vec<AlignmentOperation> = vec![];
         // loop until we reach a node with no incoming
         let mut current_node = last_node;
-        let mut current_query = query.len() - 1;
+        let mut current_query = n - 1;
 
         let simd_index = (current_query) / 8;
         let simd_inner_index = (current_query) % 8;
@@ -623,9 +586,9 @@ impl Poa {
             }
         }
         ops.reverse();
-        for op in &ops {
+        //for op in &ops {
             //println!("{:?}", op);
-        }
+        //}
         Alignment {
             score: final_score as i32,
             operations: ops

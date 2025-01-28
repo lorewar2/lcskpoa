@@ -34,11 +34,11 @@ fn main() {
         let now = Instant::now();
         for seq in seqs_bytes.iter().skip(1) {
             aligner.global_simd(seq);
+            let time = now.elapsed().as_micros() as usize;
+            println!("Completed simd poa elapsed time {}μs", time);
         }
         let graph = aligner.graph();
         //println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
-        let time = now.elapsed().as_micros() as usize;
-        println!("Completed simd poa elapsed time {}μs", time);
     }
     
 }
