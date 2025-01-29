@@ -4,41 +4,56 @@ mod poa;
 mod pairwise;
 use poa::*;
 use std::time::Instant;
-use petgraph::dot::Dot;
 use rand::{Rng, SeedableRng, rngs::StdRng};
+mod lcsk;
+mod bit_tree;
+use std::collections::HashMap;
+use petgraph::visit::Topo;
+use crate::lcsk::{find_sequence_in_graph, better_find_kmer_matches, lcskpp_graph, anchoring_lcsk_path_for_threading};
 
 fn main() {
     let match_score = 1;
     let mismatch_score = -1;
     let gap_open_score = 2;
-    for seed in 0..1 {
-        let seqs = get_random_sequences_from_generator(10000, 2, seed);
-        let mut seqs_bytes = vec![];
-        for seq in seqs.iter() {
-            seqs_bytes.push(seq.to_string().bytes().collect::<Vec<u8>>());
-        }
-        let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs_bytes[0]);
+    // get the graph first
+    
+    let seed = 0;
+    let kmer_size = 4;
+    let mut all_paths = vec![];
+    let mut all_sequences = vec![];
+    let seqs = get_random_sequences_from_generator(400_000, 10, seed);
+    let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec());
+    for index in 1..seqs.len() {
         let now = Instant::now();
-        for seq in seqs_bytes.iter().skip(1) {
-            aligner.global(seq).add_to_graph();
+        let output_graph = aligner.graph();
+        let mut topo = Topo::new(&output_graph);
+        let mut topo_indices = vec![];
+        let mut topo_map = HashMap::new();
+        let mut incrementing_index: usize = 0;
+        while let Some(node) = topo.next(&output_graph) {
+            topo_indices.push(node.index());
+            topo_map.insert(node.index(), incrementing_index);
+            incrementing_index += 1;
         }
-        let graph = aligner.graph();
-        //println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
+        let mut error_index = 0;
+        loop {
+            let (error_occured, temp_path, temp_sequence) = find_sequence_in_graph (seqs[index - 1].as_bytes().to_vec().clone(), &output_graph, &topo_indices, &topo_map, error_index);
+            if error_index > 10 {
+                break;
+            }
+            if !error_occured {
+                all_paths.push(temp_path);
+                all_sequences.push(temp_sequence);
+                break;
+            }
+            error_index += 1;   
+        }
+        let query = &seqs[index].as_bytes().to_vec();
+        let (kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, kmer_graph_path) = better_find_kmer_matches(&query, &all_sequences, &all_paths, kmer_size);
+        let (lcsk_path, _lcsk_path_unconverted, _k_new_score) = lcskpp_graph(kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, all_paths.len(), kmer_size, kmer_graph_path, &topo_indices);
         let time = now.elapsed().as_micros() as usize;
-        println!("Completed normal poa elapsed time {}μs", time);
-        let mut seqs_bytes = vec![];
-        for seq in seqs.iter() {
-            seqs_bytes.push(seq.to_string().bytes().collect::<Vec<u8>>());
-        }
-        let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs_bytes[0]);
-        let now = Instant::now();
-        for seq in seqs_bytes.iter().skip(1) {
-            aligner.global_simd(seq);
-            let time = now.elapsed().as_micros() as usize;
-            println!("Completed simd poa elapsed time {}μs", time);
-        }
-        let graph = aligner.graph();
-        //println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
+        println!("Completed kmer time elapsed time {}μs", time);
+        //aligner.global_simd(query);
     }
     
 }
