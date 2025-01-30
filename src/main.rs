@@ -21,10 +21,10 @@ fn main() {
     let kmer_size = 4;
     let mut all_paths = vec![];
     let mut all_sequences = vec![];
-    let seqs = get_random_sequences_from_generator(100, 10, seed);
+    let seqs = get_random_sequences_from_generator(10000, 10, seed);
     let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec());
     for index in 1..seqs.len() {
-        let now = Instant::now();
+        
         let output_graph = aligner.graph();
         let mut topo = Topo::new(&output_graph);
         let mut topo_indices = vec![];
@@ -51,10 +51,12 @@ fn main() {
         let query = &seqs[index].as_bytes().to_vec();
         let (kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, kmer_graph_path) = better_find_kmer_matches(&query, &all_sequences, &all_paths, kmer_size);
         let (lcsk_path, _lcsk_path_unconverted, _k_new_score) = lcskpp_graph(kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, all_paths.len(), kmer_size, kmer_graph_path, &topo_indices);
+        
+        let now = Instant::now();
+        //aligner.global_simd(query);
+        aligner.global_simd_banded(query);
         let time = now.elapsed().as_micros() as usize;
         println!("Completed kmer time elapsed time {}μs", time);
-        aligner.global_simd(query);
-        aligner.global_simd_banded(query);
     }
     
 }

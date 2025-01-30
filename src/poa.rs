@@ -65,20 +65,25 @@ pub struct  SimdTracker {
 impl SimdTracker {
     // make a skel with num of nodes of the graph
     fn with_capacity(m: usize, n: usize, gap_open: i32) -> Self {
-        let mut simd_matrix: Vec<(Vec<i32x8>, usize, usize)> = vec![(vec![], 0, n); m];
+        let mut simd_matrix: Vec<(Vec<i32x8>, usize, usize)> = vec![];
         let gap_open_8 = i32x8::splat(-gap_open);
         // make the index 0 one
         let gap_multiplier = i32x8::from_array([1, 2, 3, 4, 5, 6, 7, 8]);
-        let gap_open_8 = i32x8::splat(gap_open);
+        let min_score_8 = i32x8::splat(MIN_SCORE);
         // initialize first row
+        simd_matrix.push((vec![], 0, n));
         simd_matrix[0].0 = (0..n).map(|j| {
             let base_offset = (j * 8) as i32;
             (gap_multiplier + i32x8::splat(base_offset)) * -gap_open_8
         }).collect();
+        for _i in 1..n {
+            simd_matrix.push((vec![min_score_8; n], 0, n));
+        }
+        // make the other rows as well to test
         SimdTracker {
             gap_open: gap_open,
-            simd_cols: m,
-            simd_rows: n,
+            simd_cols: n,
+            simd_rows: m,
             simd_matrix: simd_matrix
         }
     }
@@ -500,7 +505,7 @@ impl Poa {
             let i = node.index(); // 0 index is for initialization so we start at 1
             // MAKE SIMD TRACKER FOR ROW
             if i != 0 {
-                simd_tracker.new_row(i, 0, n - 1); 
+                //simd_tracker.new_row(i, 0, n - 1); 
             }
             last_node = i;
             let data_base_index = hash_table.get(&r).unwrap();
@@ -518,7 +523,7 @@ impl Poa {
                 let mut X = zero_8;
                 X[0] = (index) * -gap_open_score;
                 for simd_index in 0..num_seq_vec {
-                    let mut H_prev = simd_tracker.get(i_p, simd_index);
+                    let H_prev = simd_tracker.get(i_p, simd_index);
                     //println!("H_prev {:?}", H_prev);
                     let mut H_curr;
                     // when no prevs, start
@@ -528,7 +533,7 @@ impl Poa {
                     else {
                         H_curr = simd_tracker.get(i, simd_index);
                     }
-                    let E = simd_tracker.get(i_p, simd_index) - gap_open_8;
+                    let E = H_prev - gap_open_8;
                     let MM_simd = MM_simd_full[*data_base_index][simd_index];
                     //println!("MM simd {:?}", MM_simd);
                     // need to define T2 as H cannot be modified here
@@ -574,7 +579,7 @@ impl Poa {
                 //println!("max vec {:?}", max_vec);
                 simd_tracker.set(i, simd_index, max_vec);
                 F = max_vec;
-                //print!("{:?}", HH[i][simd_index]);
+                //print!("{:?}", max_vec);
             }
             //println!("");
             index += 1;
@@ -619,13 +624,12 @@ impl Poa {
                     //print!("top {} ", HH[i_p][simd_index][simd_inner_index]);
                     let simd_vec_obtained = simd_tracker.get(i_p, simd_index);
                     let simd_prev_vec_obtained = simd_tracker.get(i_p, prev_simd_index);
-                    if current_cell_score == simd_prev_vec_obtained[simd_inner_index] - gap_open_score {
+                    if current_cell_score == simd_vec_obtained[simd_inner_index] - gap_open_score {
                         current_alignment_operation = AlignmentOperation::Del(None);
                         next_jump = current_query;
                         next_node = i_p;
                     }
                     // Diagonal
-                    
                     else if (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.match_score as i32) || (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.mismatch_score as i32) {
                         current_alignment_operation = AlignmentOperation::Match(Some((i_p, current_node)));
                         next_jump = current_query - 1;
