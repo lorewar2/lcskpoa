@@ -58,6 +58,53 @@ impl PartialEq for TracebackCell {
 
 //impl Default for TracebackCell { }
 
+
+pub struct  SimdTracker {
+    simd_cols: usize, //query length / 8
+    simd_rows: usize, //num of nodes
+    simd_matrix: Vec<(Vec<i32x8>, usize, usize)>, // each row has the start end info and simd vecs (start end info is for simd vec indices)
+}
+// *************** FINISH THIS FIRST **************
+impl SimdTracker {
+    // make a skel with num of nodes of the graph
+    fn with_capacity(m: usize, n: usize) -> Self {
+        let simd_matrix: Vec<(Vec<i32x8>, usize, usize)> = vec![(vec![], 0, n); m];
+        SimdTracker {
+            simd_cols: m,
+            simd_rows: n,
+            simd_matrix: simd_matrix
+        }
+    }
+    // allocate the matrix row with MIN SCORE stuff
+    fn new_row(&mut self, row: usize, gap_open: i32, start: usize, end: usize){
+
+    }
+    // get function, if not in band do something, try to get it back to band
+    fn get(&self, i: usize, j: usize) -> i32x8 {
+        // get the matrix cell if in band range else return the appropriate values
+        if !(self.simd_matrix[i].1 > j || self.simd_matrix[i].2 <= j || self.simd_matrix[i].0.is_empty()) {
+            let real_position = j - self.simd_matrix[i].1;
+            self.simd_matrix[i].0[real_position]
+        }
+        // make it go left, use i to modify the values so that it doesnot go up *** TO DO ***
+        else if j >= self.simd_matrix[i].2 {
+            return i32x8::from_array([5, 4, 3, 2, 1, 0, -1, -2]);
+        }
+        // make it go up to meet the band, modify the values do it does not go left should be ok with same numbers
+        else {
+            return i32x8::from_array([-5, -4, -3, -2, -1, 0, 1, 2]);
+        }
+    }
+    fn set(&mut self, i: usize, j: usize, simd: i32x8) {
+        // set the matrix cell if in band range
+        if !(self.simd_matrix[i].1 > j || self.simd_matrix[i].2 < j) {
+            let real_position = j - self.simd_matrix[i].1;
+            self.simd_matrix[i].0[real_position] = simd;
+        }
+    }
+    // set function, if not in band do nothing 
+}
+
 impl Eq for TracebackCell {}
 
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
