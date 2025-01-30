@@ -1,13 +1,9 @@
-
-
 use std::cmp::{max, Ordering};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::Topo;
 use petgraph::{Directed, Graph, Incoming};
 pub const MIN_SCORE: i32 = -858_993_459; // negative infinity; see alignment/pairwise/mod.rs
 pub type POAGraph = Graph<u8, i32, Directed, usize>;
-use std::simd::i16x8;
-use std::simd::i16x16;
 use std::simd::i32x8;
 use std::simd::cmp::SimdOrd;
 use std::collections::HashMap;
@@ -60,6 +56,7 @@ impl PartialEq for TracebackCell {
 
 
 pub struct  SimdTracker {
+    gap_open: i32, // required for sending fake data of unbanded sections
     simd_cols: usize, //query length / 8
     simd_rows: usize, //num of nodes
     simd_matrix: Vec<(Vec<i32x8>, usize, usize)>, // each row has the start end info and simd vecs (start end info is for simd vec indices)
@@ -67,17 +64,32 @@ pub struct  SimdTracker {
 // *************** FINISH THIS FIRST **************
 impl SimdTracker {
     // make a skel with num of nodes of the graph
-    fn with_capacity(m: usize, n: usize) -> Self {
-        let simd_matrix: Vec<(Vec<i32x8>, usize, usize)> = vec![(vec![], 0, n); m];
+    fn with_capacity(m: usize, n: usize, gap_open: i32) -> Self {
+        let mut simd_matrix: Vec<(Vec<i32x8>, usize, usize)> = vec![(vec![], 0, n); m];
+        let gap_open_8 = i32x8::splat(-gap_open);
+        // make the index 0 one
+        let gap_multiplier = i32x8::from_array([1, 2, 3, 4, 5, 6, 7, 8]);
+        let gap_open_8 = i32x8::splat(gap_open);
+        // initialize first row
+        simd_matrix[0].0 = (0..n).map(|j| {
+            let base_offset = (j * 8) as i32;
+            (gap_multiplier + i32x8::splat(base_offset)) * -gap_open_8
+        }).collect();
         SimdTracker {
+            gap_open: gap_open,
             simd_cols: m,
             simd_rows: n,
             simd_matrix: simd_matrix
         }
     }
     // allocate the matrix row with MIN SCORE stuff
-    fn new_row(&mut self, row: usize, gap_open: i32, start: usize, end: usize){
-
+    fn new_row(&mut self, row: usize, start: usize, end: usize){
+        self.simd_matrix[row].1 = start;
+        self.simd_matrix[row].2 = end;
+        for _ in start..end + 1{
+            self.simd_matrix[row].0.push(i32x8::splat(MIN_SCORE));
+        }
+        
     }
     // get function, if not in band do something, try to get it back to band
     fn get(&self, i: usize, j: usize) -> i32x8 {
@@ -86,13 +98,18 @@ impl SimdTracker {
             let real_position = j - self.simd_matrix[i].1;
             self.simd_matrix[i].0[real_position]
         }
-        // make it go left, use i to modify the values so that it doesnot go up *** TO DO ***
+        // this should happen, but if it did try to control
         else if j >= self.simd_matrix[i].2 {
-            return i32x8::from_array([5, 4, 3, 2, 1, 0, -1, -2]);
+            let neg_10 = i32x8::splat(-(10 * (1_000_000 - i as i32))); //will not go up or diagonal, **gap end/mismatch should not be 10** test this :C
+            let gap_open = i32x8::splat(self.gap_open as i32);
+            let j_multi = i32x8::splat(j as i32 * 8);
+            let j_increment = i32x8::from_array([1, 2, 3, 4, 5, 6, 7, 8]);
+            return ((j_multi + j_increment) * gap_open) + neg_10;
         }
         // make it go up to meet the band, modify the values do it does not go left should be ok with same numbers
         else {
-            return i32x8::from_array([-5, -4, -3, -2, -1, 0, 1, 2]);
+            let neg_10 = i32x8::splat(self.gap_open * (1_000_000 - i as i32));
+            return i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1]) * neg_10;
         }
     }
     fn set(&mut self, i: usize, j: usize, simd: i32x8) {
@@ -329,7 +346,14 @@ impl Aligner {
         self.query = query.to_vec();
         //let alignment = self.poa.custom_simd(query);
         let alignment = self.poa.custom_simd(query);
-        self.poa.add_alignment(&alignment, &self.query);
+        //self.poa.add_alignment(&alignment, &self.query);
+        self
+    }
+    pub fn global_simd_banded(&mut self, query: &Vec<u8>) -> &mut Self {
+        self.query = query.to_vec();
+        //let alignment = self.poa.custom_simd(query);
+        let alignment = self.poa.custom_simd_indirect_address(query);
+        //self.poa.add_alignment(&alignment, &self.query);
         self
     }
     /// Return alignment graph.
@@ -439,6 +463,201 @@ impl Poa {
             MM_simd[3].push(i32x8::from_array(temp_T));
         }
         MM_simd
+    }
+    pub fn custom_simd_indirect_address (&mut self, query: &Vec<u8>) -> Alignment {
+        //println!("simd");
+        // profile the query and what not
+        let mut hash_table = HashMap::new();
+        hash_table.insert(65, 0);
+        hash_table.insert(67, 1);
+        hash_table.insert(71, 2);
+        hash_table.insert(84, 3);
+        let MM_simd_full = Poa::profile_query(query, self.match_score, self.mismatch_score);
+        // other simd stuff required
+        let gap_open_score = -self.gap_open_score as i32;
+        let gap_open_8 = i32x8::splat(gap_open_score);
+        let zero_8 = i32x8::splat(0);
+        let min_score_8 = i32x8::splat(MIN_SCORE);
+        let left_mask_1 = i32x8::from_array([0, 1, 1, 1, 1, 1, 1, 1]);
+        let right_mask_7 = i32x8::from_array([1, 0, 0, 0, 0, 0, 0, 0]);
+        assert!(self.graph.node_count() != 0);
+        // dimensions of the traceback matrix
+        let (m, n) = (self.graph.node_count(), query.len());
+        //SIMD TRACKER INIT
+        let mut simd_tracker = SimdTracker::with_capacity(m, n, self.gap_open_score);
+        let num_seq_vec = (n as f64 / 8.0).ceil() as usize;
+        // construct the score matrix (O(n^2) space)
+        let mut index = 0;
+        let mut topo = Topo::new(&self.graph);
+        // required stuff for backtrace
+        let mut last_node= 0;
+        while let Some(node) = topo.next(&self.graph) {
+            //let mut F = i32x8::from_array([0, 0, 0, 0, 0, 0, 0, (index + 1) * -gap_open_score]);
+            let mut F = zero_8;
+            F[7] = (index + 1) * -gap_open_score;
+            // reference base and index
+            let r = self.graph.raw_nodes()[node.index()].weight;
+            let i = node.index(); // 0 index is for initialization so we start at 1
+            // MAKE SIMD TRACKER FOR ROW
+            if i != 0 {
+                simd_tracker.new_row(i, 0, n - 1); 
+            }
+            last_node = i;
+            let data_base_index = hash_table.get(&r).unwrap();
+            // iterate over the predecessors of this node
+            let mut prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(node, Incoming).collect();
+            // add node index i (self referencing if no prev)
+            if prevs.len() == 0 {
+                prevs.push(node);
+            }
+            // vertical and diagonal
+            for prev_node in &prevs {
+                let i_p: usize = prev_node.index(); // index of previous node
+                //println!("S");
+                //let mut X = i32x8::from_array([(index) * -gap_open_score, 0, 0, 0, 0, 0, 0, 0]);
+                let mut X = zero_8;
+                X[0] = (index) * -gap_open_score;
+                for simd_index in 0..num_seq_vec {
+                    let mut H_prev = simd_tracker.get(i_p, simd_index);
+                    //println!("H_prev {:?}", H_prev);
+                    let mut H_curr;
+                    // when no prevs, start
+                    if i_p == i {
+                        H_curr = min_score_8; // was i16::Min * 8
+                    }
+                    else {
+                        H_curr = simd_tracker.get(i, simd_index);
+                    }
+                    let E = simd_tracker.get(i_p, simd_index) - gap_open_8;
+                    let MM_simd = MM_simd_full[*data_base_index][simd_index];
+                    //println!("MM simd {:?}", MM_simd);
+                    // need to define T2 as H cannot be modified here
+                    let T1 = H_prev.rotate_elements_left::<7>() * right_mask_7;
+                    let mut T2 = (H_prev.rotate_elements_right::<1>() * left_mask_1) + X;
+                    //println!("X {:?}", X);
+                    X = T1;
+                    // match score added
+                    //println!("T2 {:?}", T2);
+                    T2 = T2 + MM_simd;
+                    
+                    //println!("E {:?}", E);
+                    // diagonal or horizontal
+                    H_curr = H_curr.simd_max(T2);
+                    H_curr = H_curr.simd_max(E);
+                    simd_tracker.set(i, simd_index, H_curr);
+                }
+            }
+            // horizontal NEeds fixing, non simd is faster here
+            for simd_index in 0..num_seq_vec {
+                let H = simd_tracker.get(i, simd_index);
+                //println!("H after ver {:?}", H);
+                //F = F - gap_open_8;
+                //F = F.rotate_elements_left::<7>() * right_mask_7;
+                //println!("F before {:?}", F);
+                //let mut T3 = F.clone();
+                let mut T3 = F[7];
+                let mut max_vec = zero_8;
+                for iter in 0..8 {
+                    let temp = H[iter];
+                    // lshift 2 t2, for gap extends
+                    T3 = T3 - gap_open_score;
+                    if temp > T3 {
+                        T3 = temp;
+                    }
+                    //T3 = (T3 - gap_open_8) * mask_array[iter];
+                    //T3 = T3.simd_max(H * mask_array[iter]);
+                    //println!("T3 {} {:?}", _iter, T3);
+                    //H = T3.simd_max(H);
+                    max_vec[iter] = T3;
+                    //T3 = (T3).rotate_elements_right::<1>();
+                }
+                //println!("max vec {:?}", max_vec);
+                simd_tracker.set(i, simd_index, max_vec);
+                F = max_vec;
+                //print!("{:?}", HH[i][simd_index]);
+            }
+            //println!("");
+            index += 1;
+        }
+        // Get the alignment by backtracking and recalculating stuff
+        let mut ops: Vec<AlignmentOperation> = vec![];
+        // loop until we reach a node with no incoming
+        let mut current_node = last_node;
+        let mut current_query = n - 1;
+
+        let simd_index = (current_query) / 8;
+        let simd_inner_index = (current_query) % 8;
+        let simd_vec_obtained = simd_tracker.get(current_node, simd_index);
+        let final_score = simd_vec_obtained[simd_inner_index];
+        println!("simd score: {}", final_score);
+        //println!("query len {}", current_query);
+        loop {
+            let mut current_alignment_operation = AlignmentOperation::Match(None);
+            //check the score ins left of query
+            let prev_simd_index = (current_query - 1) / 8;
+            let prev_simd_inner_index = (current_query - 1) % 8;
+
+            let simd_index = (current_query) / 8;
+            let simd_inner_index = (current_query) % 8;
+
+            let simd_vec_obtained = simd_tracker.get(current_node, simd_index);
+            let current_cell_score = simd_vec_obtained[simd_inner_index];
+            let mut next_jump = 0;
+            let mut next_node = 0;
+            // check left if gap open difference with left
+            let prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_node), Incoming).collect();
+            let simd_prev_vec_obtained = simd_tracker.get(current_node, prev_simd_index);
+            if current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] - gap_open_score {
+                current_alignment_operation = AlignmentOperation::Ins(Some(current_node));
+                next_jump = current_query - 1;
+                next_node = current_node;
+            }
+            else {
+                for prev in &prevs {
+                    let i_p = prev.index();
+                    // Top
+                    //print!("top {} ", HH[i_p][simd_index][simd_inner_index]);
+                    let simd_vec_obtained = simd_tracker.get(i_p, simd_index);
+                    let simd_prev_vec_obtained = simd_tracker.get(i_p, prev_simd_index);
+                    if current_cell_score == simd_prev_vec_obtained[simd_inner_index] - gap_open_score {
+                        current_alignment_operation = AlignmentOperation::Del(None);
+                        next_jump = current_query;
+                        next_node = i_p;
+                    }
+                    // Diagonal
+                    
+                    else if (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.match_score as i32) || (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.mismatch_score as i32) {
+                        current_alignment_operation = AlignmentOperation::Match(Some((i_p, current_node)));
+                        next_jump = current_query - 1;
+                        next_node = i_p;
+                    }
+                }
+            }
+            ops.push(current_alignment_operation);
+            // iterate to next
+            current_query = next_jump;
+            current_node = next_node;
+            // break point
+            if prevs.len() == 0 || current_query == 0 {
+                //if at end but not at start of query add bunch of ins(None)
+                if current_query > 0 {
+                    for _ in 0..current_query {
+                        ops.push(AlignmentOperation::Ins(None));
+                    }
+                }
+                ops.push(AlignmentOperation::Match(None));
+                //if at start of query but previous stuff available add bunch of del, this really doesnt matter though
+                break;
+            }
+        }
+        ops.reverse();
+        //for op in &ops {
+            //println!("{:?}", op);
+        //}
+        Alignment {
+            score: final_score as i32,
+            operations: ops
+        }
     }
 
     pub fn custom_simd(&mut self, query: &Vec<u8>) -> Alignment {
