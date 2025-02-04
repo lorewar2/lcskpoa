@@ -7,6 +7,7 @@ pub type POAGraph = Graph<u8, i32, Directed, usize>;
 use std::simd::i32x8;
 use std::simd::cmp::SimdOrd;
 use std::collections::HashMap;
+use std::time::Instant;
 
 // Unlike with a total order we may have arbitrary successors in the
 // traceback matrix. I have not yet figured out what the best level of
@@ -59,52 +60,73 @@ pub struct  SimdTracker {
     gap_open: i32, // required for sending fake data of unbanded sections
     simd_cols: usize, //query length / 8
     simd_rows: usize, //num of nodes
-    simd_matrix: Vec<(Vec<i32x8>, usize, usize)>, // each row has the start end info and simd vecs (start end info is for simd vec indices)
+    simd_matrix: Vec<Vec<i32x8>>, // each row has the start end info and simd vecs (start end info is for simd vec indices)
+    start_end_tracker: Vec<(usize, usize)>,
 }
-// *************** FINISH THIS FIRST **************
+
 impl SimdTracker {
+    fn new (m: usize, n: usize, gap_open: i32) -> Self {
+        let mut simd_matrix: Vec<Vec<i32x8>> = vec![vec![]; m];
+        let mut start_end_tracker = vec![(0, n); m];
+        let gap_open_8 = i32x8::splat(-gap_open);
+        // make the index 0 one
+        let gap_multiplier = i32x8::from_array([1, 2, 3, 4, 5, 6, 7, 8]);
+        simd_matrix[0] = (0..n).map(|j| {
+            let base_offset = (j * 8) as i32;
+            (gap_multiplier + i32x8::splat(base_offset)) * -gap_open_8
+        }).collect();
+        
+        start_end_tracker[0] = (0, n);
+        SimdTracker {
+            gap_open: gap_open,
+            simd_cols: n,
+            simd_rows: m,
+            simd_matrix: simd_matrix,
+            start_end_tracker: start_end_tracker,
+        }
+    }
     // make a skel with num of nodes of the graph
     fn with_capacity(m: usize, n: usize, gap_open: i32) -> Self {
-        let mut simd_matrix: Vec<(Vec<i32x8>, usize, usize)> = vec![];
+        let start_end_tracker = vec![(0, n); m];
+        let mut simd_matrix: Vec<Vec<i32x8>> = Vec::with_capacity(m);
         let gap_open_8 = i32x8::splat(-gap_open);
         // make the index 0 one
         let gap_multiplier = i32x8::from_array([1, 2, 3, 4, 5, 6, 7, 8]);
         let min_score_8 = i32x8::splat(MIN_SCORE);
         // initialize first row
-        simd_matrix.push((vec![], 0, n));
-        simd_matrix[0].0 = (0..n).map(|j| {
+        simd_matrix.push((0..n).map(|j| {
             let base_offset = (j * 8) as i32;
             (gap_multiplier + i32x8::splat(base_offset)) * -gap_open_8
-        }).collect();
-        for _i in 1..n {
-            simd_matrix.push((vec![min_score_8; n], 0, n));
+        }).collect());
+        for _i in 1..m {
+            simd_matrix.push(vec![min_score_8; n]);
         }
         // make the other rows as well to test
         SimdTracker {
             gap_open: gap_open,
             simd_cols: n,
             simd_rows: m,
-            simd_matrix: simd_matrix
+            simd_matrix: simd_matrix,
+            start_end_tracker: start_end_tracker,
         }
     }
     // allocate the matrix row with MIN SCORE stuff
     fn new_row(&mut self, row: usize, start: usize, end: usize){
-        self.simd_matrix[row].1 = start;
-        self.simd_matrix[row].2 = end;
+        self.start_end_tracker.push((start, end));
         for _ in start..end + 1{
-            self.simd_matrix[row].0.push(i32x8::splat(MIN_SCORE));
+            self.simd_matrix[row].push(i32x8::splat(MIN_SCORE));
         }
         
     }
     // get function, if not in band do something, try to get it back to band
     fn get(&self, i: usize, j: usize) -> i32x8 {
         // get the matrix cell if in band range else return the appropriate values
-        if !(self.simd_matrix[i].1 > j || self.simd_matrix[i].2 <= j || self.simd_matrix[i].0.is_empty()) {
-            let real_position = j - self.simd_matrix[i].1;
-            self.simd_matrix[i].0[real_position]
+        if !(self.start_end_tracker[i].0 > j || self.start_end_tracker[i].1 <= j || self.simd_matrix[i].is_empty()) {
+            let real_position = j - self.start_end_tracker[i].0;
+            self.simd_matrix[i][real_position]
         }
         // this should happen, but if it did try to control
-        else if j >= self.simd_matrix[i].2 {
+        else if j >= self.start_end_tracker[i].1 {
             let neg_10 = i32x8::splat(-(10 * (1_000_000 - i as i32))); //will not go up or diagonal, **gap end/mismatch should not be 10** test this :C
             let gap_open = i32x8::splat(self.gap_open as i32);
             let j_multi = i32x8::splat(j as i32 * 8);
@@ -119,9 +141,9 @@ impl SimdTracker {
     }
     fn set(&mut self, i: usize, j: usize, simd: i32x8) {
         // set the matrix cell if in band range
-        if !(self.simd_matrix[i].1 > j || self.simd_matrix[i].2 < j) {
-            let real_position = j - self.simd_matrix[i].1;
-            self.simd_matrix[i].0[real_position] = simd;
+        if !(self.start_end_tracker[i].0 > j || self.start_end_tracker[i].1 < j) {
+            let real_position = j - self.start_end_tracker[i].0;
+            self.simd_matrix[i][real_position] = simd;
         }
     }
     // set function, if not in band do nothing 
@@ -488,9 +510,9 @@ impl Poa {
         assert!(self.graph.node_count() != 0);
         // dimensions of the traceback matrix
         let (m, n) = (self.graph.node_count(), query.len());
-        //SIMD TRACKER INIT
-        let mut simd_tracker = SimdTracker::with_capacity(m, n, self.gap_open_score);
         let num_seq_vec = (n as f64 / 8.0).ceil() as usize;
+        //SIMD TRACKER INIT
+        let mut simd_tracker = SimdTracker::with_capacity(m, num_seq_vec, self.gap_open_score);
         // construct the score matrix (O(n^2) space)
         let mut index = 0;
         let mut topo = Topo::new(&self.graph);
@@ -504,9 +526,9 @@ impl Poa {
             let r = self.graph.raw_nodes()[node.index()].weight;
             let i = node.index(); // 0 index is for initialization so we start at 1
             // MAKE SIMD TRACKER FOR ROW
-            if i != 0 {
-                //simd_tracker.new_row(i, 0, n - 1); 
-            }
+            //if i != 0 {
+            //    simd_tracker.new_row(i, 0, num_seq_vec); 
+            //}
             last_node = i;
             let data_base_index = hash_table.get(&r).unwrap();
             // iterate over the predecessors of this node
@@ -687,7 +709,9 @@ impl Poa {
         //println!("query.len() {}", query.len());
         let num_seq_vec = (n as f64 / 8.0).ceil() as usize;
         //initialize HH with simd vecs, HH is used as traceback
-        let mut HH: Vec<Vec<i32x8>> = Vec::with_capacity(m);
+        let now = Instant::now();
+        
+        let mut HH: Vec<Vec<i32x8>> = vec![];
         let gap_multiplier = i32x8::from_array([1, 2, 3, 4, 5, 6, 7, 8]);
         for i in 0..m {
             if i == 0 {
@@ -701,6 +725,8 @@ impl Poa {
                 HH.push(vec![min_score_8; num_seq_vec]);
             }
         }
+        let time = now.elapsed().as_micros() as usize;
+        println!("time for old init {}μs", time);
         // construct the score matrix (O(n^2) space)
         let mut index = 0;
         let mut topo = Topo::new(&self.graph);
