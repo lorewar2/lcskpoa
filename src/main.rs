@@ -21,7 +21,7 @@ fn main() {
     let kmer_size = 4;
     let mut all_paths = vec![];
     let mut all_sequences = vec![];
-    let seqs = get_random_sequences_from_generator(10000, 10, seed);
+    let seqs = get_random_sequences_from_generator(1000, 2, seed);
     let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec());
     for index in 1..seqs.len() {
         
@@ -54,7 +54,7 @@ fn main() {
         
         let now = Instant::now();
         //aligner.global_simd(query);
-        aligner.global_simd_banded(query);
+        aligner.global_simd_banded(query, &lcsk_path, 100);
         let time = now.elapsed().as_micros() as usize;
         println!("Completed kmer time elapsed time {}μs", time);
     }

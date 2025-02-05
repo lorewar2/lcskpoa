@@ -58,8 +58,6 @@ impl PartialEq for TracebackCell {
 
 pub struct  SimdTracker {
     gap_open: i32, // required for sending fake data of unbanded sections
-    simd_cols: usize, //query length / 8
-    simd_rows: usize, //num of nodes
     simd_matrix: Vec<Vec<i32x8>>, // each row has the start end info and simd vecs (start end info is for simd vec indices)
     start_end_tracker: Vec<(usize, usize)>,
 }
@@ -79,8 +77,94 @@ impl SimdTracker {
         start_end_tracker[0] = (0, n);
         SimdTracker {
             gap_open: gap_open,
-            simd_cols: n,
-            simd_rows: m,
+            simd_matrix: simd_matrix,
+            start_end_tracker: start_end_tracker,
+        }
+    }
+    fn with_capacity_lcsk_band(m: usize, n: usize, num_of_simd: usize, gap_open: i32, lcsk_path: &Vec<(usize, usize)>, band_size: usize) -> Self {
+        let mut start_end_tracker = Vec::with_capacity(m);
+        let mut simd_matrix: Vec<Vec<i32x8>> = Vec::with_capacity(m);
+        let gap_open_8 = i32x8::splat(-gap_open);
+        // make the index 0 one
+        let gap_multiplier = i32x8::from_array([1, 2, 3, 4, 5, 6, 7, 8]);
+        let min_score_8 = i32x8::splat(MIN_SCORE);
+        // initialize each row using lcsk path and band
+        let mut no_kmers = false;
+        if lcsk_path.len() == 0 {
+            no_kmers = true;
+        }
+        println!("no kmers {}", no_kmers);
+        let mut start_banding_query_node = (0, 0);
+        let mut end_banding_query_node = &(0, 0);
+        let mut banding_started = false;
+        let mut banding_ended = false;
+        let mut current_lcsk_path_index = 0;
+        if !no_kmers {
+            start_banding_query_node = lcsk_path[0];
+            end_banding_query_node = lcsk_path.last().unwrap();
+        }
+        for node_index in 0..m {
+            let mut start = 0;
+            let mut end = n;
+            if !no_kmers {
+                if banding_started == false {
+                    //do banding till start_banding_query_node + bandwidth
+                    end = start_banding_query_node.0 + band_size;
+                }
+                else if banding_ended == true {
+                    // do banding till till end of table
+                    start = if band_size > end_banding_query_node.0 {
+                        0
+                    } else {
+                        end_banding_query_node.0 - band_size
+                    };
+                }
+                else{
+                    start = if band_size > lcsk_path[current_lcsk_path_index].0 {
+                        0
+                    } else {
+                        lcsk_path[current_lcsk_path_index].0 - band_size
+                    };
+                    if lcsk_path.len() < current_lcsk_path_index + 1 {
+                        end = lcsk_path[current_lcsk_path_index + 1].0 + band_size;
+                    }
+                    else {
+                        end = lcsk_path[current_lcsk_path_index].0 + band_size;
+                    }
+                }
+                if banding_ended != true {
+                    if lcsk_path[current_lcsk_path_index].1 == node_index {
+                        current_lcsk_path_index += 1;
+                    }
+                    if start_banding_query_node.1 == node_index {
+                        banding_started = true;
+                    }
+                    if end_banding_query_node.1 == node_index {
+                        banding_ended = true;
+                    }
+                }
+            }
+            if end > n {
+                end = n;
+            }
+            // convert start and end to simd index 
+            let start_simd = start / 8;
+            let end_simd = (end / 8) + 1;
+            start_end_tracker.push((start_simd, end_simd));
+            // add to matrix and start end vec
+            if node_index == 0 {
+                simd_matrix.push((start_simd..end_simd + 1).map(|j| {
+                    let base_offset = (j * 8) as i32;
+                    (gap_multiplier + i32x8::splat(base_offset)) * -gap_open_8
+                }).collect());
+            }
+            else {
+                simd_matrix.push(vec![min_score_8; end_simd - start_simd + 1]);
+            }
+        }
+        // make the other rows as well to test
+        SimdTracker {
+            gap_open: gap_open,
             simd_matrix: simd_matrix,
             start_end_tracker: start_end_tracker,
         }
@@ -104,8 +188,6 @@ impl SimdTracker {
         // make the other rows as well to test
         SimdTracker {
             gap_open: gap_open,
-            simd_cols: n,
-            simd_rows: m,
             simd_matrix: simd_matrix,
             start_end_tracker: start_end_tracker,
         }
@@ -141,6 +223,7 @@ impl SimdTracker {
     }
     fn set(&mut self, i: usize, j: usize, simd: i32x8) {
         // set the matrix cell if in band range
+        //println!("j {} {}", j, self.start_end_tracker[i].1);
         if !(self.start_end_tracker[i].0 > j || self.start_end_tracker[i].1 < j) {
             let real_position = j - self.start_end_tracker[i].0;
             self.simd_matrix[i][real_position] = simd;
@@ -373,14 +456,14 @@ impl Aligner {
         self.query = query.to_vec();
         //let alignment = self.poa.custom_simd(query);
         let alignment = self.poa.custom_simd(query);
-        //self.poa.add_alignment(&alignment, &self.query);
+        self.poa.add_alignment(&alignment, &self.query);
         self
     }
-    pub fn global_simd_banded(&mut self, query: &Vec<u8>) -> &mut Self {
+    pub fn global_simd_banded(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, band_size: usize) -> &mut Self {
         self.query = query.to_vec();
         //let alignment = self.poa.custom_simd(query);
-        let alignment = self.poa.custom_simd_indirect_address(query);
-        //self.poa.add_alignment(&alignment, &self.query);
+        let alignment = self.poa.custom_simd_indirect_address(query, lcsk_path, band_size);
+        self.poa.add_alignment(&alignment, &self.query);
         self
     }
     /// Return alignment graph.
@@ -491,7 +574,7 @@ impl Poa {
         }
         MM_simd
     }
-    pub fn custom_simd_indirect_address (&mut self, query: &Vec<u8>) -> Alignment {
+    pub fn custom_simd_indirect_address (&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, band_size: usize) -> Alignment {
         //println!("simd");
         // profile the query and what not
         let mut hash_table = HashMap::new();
@@ -512,7 +595,9 @@ impl Poa {
         let (m, n) = (self.graph.node_count(), query.len());
         let num_seq_vec = (n as f64 / 8.0).ceil() as usize;
         //SIMD TRACKER INIT
-        let mut simd_tracker = SimdTracker::with_capacity(m, num_seq_vec, self.gap_open_score);
+        // update with lcsk path
+        // use lcsk path here for making matrix
+        let mut simd_tracker = SimdTracker::with_capacity_lcsk_band(m, n, num_seq_vec, self.gap_open_score, lcsk_path, band_size);
         // construct the score matrix (O(n^2) space)
         let mut index = 0;
         let mut topo = Topo::new(&self.graph);
@@ -529,6 +614,9 @@ impl Poa {
             //if i != 0 {
             //    simd_tracker.new_row(i, 0, num_seq_vec); 
             //}
+            let start_simd = simd_tracker.start_end_tracker[i].0;
+            let end_simd = simd_tracker.start_end_tracker[i].1;
+            //println!("start end {} {}", start_simd, end_simd);
             last_node = i;
             let data_base_index = hash_table.get(&r).unwrap();
             // iterate over the predecessors of this node
@@ -545,6 +633,12 @@ impl Poa {
                 let mut X = zero_8;
                 X[0] = (index) * -gap_open_score;
                 for simd_index in 0..num_seq_vec {
+                    if start_simd > simd_index {
+                        continue;
+                    }
+                    if end_simd < simd_index {
+                        break;
+                    }
                     let H_prev = simd_tracker.get(i_p, simd_index);
                     //println!("H_prev {:?}", H_prev);
                     let mut H_curr;
@@ -576,6 +670,12 @@ impl Poa {
             }
             // horizontal NEeds fixing, non simd is faster here
             for simd_index in 0..num_seq_vec {
+                if start_simd > simd_index {
+                    continue;
+                }
+                if end_simd < simd_index {
+                    break;
+                }
                 let H = simd_tracker.get(i, simd_index);
                 //println!("H after ver {:?}", H);
                 //F = F - gap_open_8;
