@@ -123,7 +123,7 @@ impl SimdTracker {
             let gap_open = i32x8::splat(self.gap_open as i32);
             let j_multi = i32x8::splat(j as i32 * 8);
             let j_increment = i32x8::from_array([1, 2, 3, 4, 5, 6, 7, 8]);
-            println!("Go left");
+            //println!("Go left");
             return ((j_multi + j_increment) * gap_open) + neg_10;
         }
         // make it go up to meet the band, modify the values do it does not go left should be ok with same numbers
@@ -368,7 +368,7 @@ impl Aligner {
         self.query = query.to_vec();
         //let alignment = self.poa.custom_simd(query);
         let alignment = self.poa.custom_simd(query);
-        self.poa.add_alignment(&alignment, &self.query);
+        //self.poa.add_alignment(&alignment, &self.query);
         self
     }
     pub fn global_simd_banded(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, band_size: usize) -> &mut Self {
@@ -960,7 +960,7 @@ impl Poa {
         }
         ops.reverse();
         //for op in &ops {
-            //println!("{:?}", op);
+        //println!("new one {:?}", ops);
         //}
         Alignment {
             score: final_score as i32,
