@@ -1,5 +1,5 @@
 #![feature(portable_simd)]
-#![allow(dead_code)]
+//#![allow(dead_code)]
 mod poa;
 mod pairwise;
 mod poa_old;
@@ -11,7 +11,7 @@ mod lcsk;
 mod bit_tree;
 use std::collections::HashMap;
 use petgraph::visit::Topo;
-use crate::lcsk::{find_sequence_in_graph, better_find_kmer_matches, lcskpp_graph, anchoring_lcsk_path_for_threading};
+use crate::lcsk::{find_sequence_in_graph, find_kmer_matches, lcskpp_graph};
 
 fn main() {
     let seqs = vec![
@@ -33,7 +33,7 @@ fn main() {
     let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec());
     let mut old_aligner = Aligner2::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec(), i32::MIN, i32::MIN, &band_size);
     for index in 1..seqs.len() {
-        let output_graph = aligner.graph();
+        let output_graph = old_aligner.graph();
         let mut topo = Topo::new(&output_graph);
         let mut topo_indices = vec![];
         let mut topo_map = HashMap::new();
@@ -57,16 +57,16 @@ fn main() {
             error_index += 1;   
         }
         let query = &seqs[index].as_bytes().to_vec();
-        let (kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, kmer_graph_path) = better_find_kmer_matches(&query, &all_sequences, &all_paths, kmer_size);
+        let (kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, kmer_graph_path) = find_kmer_matches(&query, &all_sequences, &all_paths, kmer_size);
         let (lcsk_path, _lcsk_path_unconverted, _k_new_score) = lcskpp_graph(kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, all_paths.len(), kmer_size, kmer_graph_path, &topo_indices);
         //println!("{:?}", lcsk_path);
         let now = Instant::now();
         //aligner.global_simd(query);
         if index != 20 {
             //old_aligner.global_banded(query, &lcsk_path, band_size as usize).add_to_graph();
-            aligner.global_simd(query);
+            //aligner.global_simd(query);
             old_aligner.global(query).add_to_graph();
-            println!("{}", old_aligner.alignment().score);
+            //println!("{}", old_aligner.alignment().score);
             //aligner.global_simd_banded(query, &lcsk_path, band_size as usize);
         }
         else {
