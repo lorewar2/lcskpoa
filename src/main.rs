@@ -12,68 +12,50 @@ mod lcsk;
 mod bit_tree;
 use std::collections::HashMap;
 use petgraph::visit::Topo;
-use crate::lcsk::{find_sequence_in_graph, find_kmer_matches, lcskpp_graph};
+use crate::lcsk::{find_kmer_matches, lcskpp_graph};
 
 fn main() {
     let seqs = get_random_sequences_from_generator(12, 8, 0);
     let match_score = 2;
     let mismatch_score = -2;
     let gap_open_score = 2;
-    // get the graph first
     let band_size = 250;
     let seed = 1;
     let kmer_size = 3;
-    let mut all_paths = vec![];
-    let mut all_sequences = vec![];
-    //let seqs = get_random_sequences_from_generator(1000, 3, seed);
+    
     //let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec());
     let mut old_aligner = Aligner2::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec(), i32::MIN, i32::MIN, band_size);
+    let mut temp_path: Vec<usize> = (0..seqs[0].len()).collect();
+    let mut all_paths = vec![];
+    let mut all_bases = vec![seqs[0].as_bytes().to_vec()];
     for index in 1..seqs.len() - 1 {
         let output_graph = old_aligner.graph();
-        println!("{:?}", Dot::new(&output_graph.map(|_, n| (*n) as char, |_, e| *e)));
-        println!("{}", seqs[index]);
         let mut topo = Topo::new(&output_graph);
         let mut index_topo_index_value_graph_index_vec = vec![];
         let mut key_graph_index_value_topo_index_map = HashMap::new();
         let mut incrementing_index: usize = 0;
+        let mut temp_path_index = 0;
+        let mut temp_path_converted = vec![];
+        // convert the temp path to topo indices
         while let Some(node) = topo.next(&output_graph) {
+            if temp_path[temp_path_index] == node.index() {
+                temp_path_converted.push(incrementing_index);
+                temp_path_index += 1;
+            }
             index_topo_index_value_graph_index_vec.push(node.index());
             key_graph_index_value_topo_index_map.insert(node.index(), incrementing_index);
             incrementing_index += 1;
         }
-        println!("");
-        let mut error_index = 0;
-        loop {
-            let (error_occured, temp_path, temp_sequence) = find_sequence_in_graph(seqs[index - 1].as_bytes().to_vec().clone(), &output_graph, &index_topo_index_value_graph_index_vec, &key_graph_index_value_topo_index_map, error_index);
-            if error_index > 10 {
-                break;
-            }
-            if !error_occured {
-                println!("temp path {:?}", temp_path);
-                println!("temp seq {:?}", temp_sequence);
-                all_paths.push(temp_path);
-                all_sequences.push(temp_sequence);
-                println!("NO error occured");
-                break;
-            }
-            error_index += 1;   
-        }
-        println!("all paths vec len {}", all_paths.len());
+        all_paths.push(temp_path_converted);
         let query = &seqs[index].as_bytes().to_vec();
-        println!("query {:?}", query);
-        println!("path of last {:?}", all_paths.last());
-        let (kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, kmer_graph_path) = find_kmer_matches(&query, &all_sequences, &all_paths, kmer_size);
-        println!("kmers {:?} len {}", kmer_pos_vec, kmer_pos_vec.len());
-        for index_2 in 0..kmer_pos_vec.len() {
-            println!("node index {} original kmer {:?} {:?} {:?} {:?}", index_topo_index_value_graph_index_vec[kmer_pos_vec[index_2].1 as usize], kmer_pos_vec[index_2], kmer_path_vec[index_2], kmers_previous_node_in_paths[index_2], kmer_graph_path[index_2]);
-        }
-        //let (lcsk_path, _lcsk_path_unconverted, _k_new_score) = lcskpp_graph(kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, all_paths.len(), kmer_size, kmer_graph_path, &index_topo_index_value_graph_index_vec);
-        //println!("{:?}", lcsk_path);
+        let (kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, kmer_graph_path) = find_kmer_matches(&query, &all_bases, &all_paths, kmer_size);
+        let (lcsk_path, _lcsk_path_unconverted, _k_new_score) = lcskpp_graph(kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, all_paths.len(), kmer_size, kmer_graph_path, &index_topo_index_value_graph_index_vec);
         let now = Instant::now();
         //aligner.global_simd(query);
         // we get the added path sequence and graph node indices when adding to graph
-        old_aligner.custom(query).add_to_graph();
-
+        let (obtained_temp_bases, obtained_temp_path) = old_aligner.custom(query).add_to_graph();
+        all_bases.push(obtained_temp_bases);
+        temp_path = obtained_temp_path;
         let time = now.elapsed().as_micros() as usize;
         println!("Completed kmer time elapsed time {}μs", time);
     }

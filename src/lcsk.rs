@@ -1,10 +1,8 @@
 use crate::bit_tree::MaxBitTree;
 use fxhash::FxHasher;
-use petgraph::Direction::Outgoing;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
-use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
 use itertools::Itertools;
 use fxhash::FxHashMap;
@@ -184,7 +182,7 @@ pub fn find_kmer_matches(query: &[u8], graph_sequences: &Vec<Vec<u8>>, graph_ids
     let mut kmers_paths: Vec<Vec<usize>> = vec![];
     let mut kmers_previous_node_in_paths: Vec<Vec<u32>> = vec![];
     let mut kmer_graph_path: Vec<Vec<u32>>= vec![];
-    println!("num of graph sequences {}", graph_sequences.len());
+    //println!("num of graph sequences {}", graph_sequences.len());
     for (index, seq) in graph_sequences.iter().enumerate() {
         let matches = find_kmer_matches_seq1_hashed_2(&set, seq, k);
         // go through the matches and see if they are in the already made list
@@ -233,66 +231,6 @@ pub fn find_kmer_matches(query: &[u8], graph_sequences: &Vec<Vec<u8>>, graph_ids
         //println!("{:?} / {:?}", key, value);
     }
     (kmers_result_vec, kmers_paths, kmers_previous_node_in_paths, kmer_graph_path)
-}
-
-pub fn find_sequence_in_graph (sequence: Vec<u8>, graph: &POAGraph, topo_indices: &Vec<usize>, topo_map: &HashMap<usize, usize>, error_index: usize) -> (bool, Vec<usize>, Vec<u8>) {
-    let mut current_node = 0;
-    // created the visit vec
-    let mut visited_node: Vec<bool> = vec![false; graph.node_count() + 1];
-    // created the stack to keep track
-    let mut node_stack: Vec<(usize, usize)> = vec![];
-    let mut current_index = 0;
-    let mut final_path = vec![0; sequence.len()];
-    let mut final_sequence = vec![0; sequence.len()];
-    let mut error_occured = false;
-    // find the first match to index 0 of sequence, if there is error in processing choose the next topo skipping error one
-    let mut current_error_index = 0;
-    for (_index, topo_index) in topo_indices.iter().enumerate() {
-        if graph.raw_nodes()[*topo_index].weight == sequence[current_index] {
-            current_node = *topo_index;
-            if error_index == current_error_index {
-                println!("broke here error index {} current error index {} current index {}", error_index, current_error_index, current_index);
-                break;
-            }
-            current_error_index += 1;
-            println!("ERROR OCCURED, {} {}", graph.raw_nodes()[*topo_index].weight, sequence[current_index]);
-        }
-    }
-    loop {
-        let current_node_mapped = *topo_map.get(&current_node).unwrap();
-        // push to vecs required stuff
-        final_path[current_index] = current_node_mapped;
-        final_sequence[current_index] = graph.raw_nodes()[current_node].weight;
-        // break if end of sequence reached
-        if current_index > sequence.len() - 1 {
-            println!("broke here??");
-            break;
-        }
-        // check if visited if not add neigbours to stack
-        if !visited_node[current_node_mapped] {
-            visited_node[current_node_mapped] = true;
-            for neighbour in graph.neighbors_directed(NodeIndex::new(current_node), Outgoing) {
-                // check if the neighbouring nodes are in sequence
-                if graph.raw_nodes()[neighbour.index()].weight == sequence[current_index + 1] {
-                    // add to stack the node index and current index
-                    node_stack.push((neighbour.index(), current_index + 1));
-                }
-            }
-        }
-        // pop one from stack and process update index
-        if node_stack.len() > 0  {
-            (current_node, current_index) = node_stack.pop().unwrap();
-        }
-        // break if stack is empty
-        else {
-            break;
-        }
-    }
-    if current_index != sequence.len() - 1 {
-        println!("WHat happened here current index {} seq len {} ", current_index, sequence.len() - 1);
-        error_occured = true;
-    }
-    (error_occured, final_path, final_sequence)
 }
 
 pub fn hash_kmers_2(seq: &[u8], k: usize) -> FxHashMap<&[u8], Vec<u32>> {
