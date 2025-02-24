@@ -426,7 +426,6 @@ impl Poa {
                     if (seq[i] != self.graph.raw_nodes()[head.index()].weight) && (seq[i] != b'X') {
                         let node = self.graph.add_node(seq[i]);
                         path_indices.push(node.index());
-                        println!("Match None1 {}", node.index());
                         if edge_not_connected {
                             self.graph.add_edge(prev, node, 1);
                         }
@@ -435,7 +434,6 @@ impl Poa {
                     }
                     else {
                         path_indices.push(node.index());
-                        println!("Match None2 {}", node.index());
                     }
                     if edge_not_connected {
                         self.graph.add_edge(prev, node, 1);
@@ -448,14 +446,12 @@ impl Poa {
                     let node = NodeIndex::new(*p);
                     if (seq[i] != self.graph.raw_nodes()[*p].weight) && (seq[i] != b'X') {
                         let node = self.graph.add_node(seq[i]);
-                        println!("Match Some {}", node.index());
                         path_indices.push(node.index());
                         self.graph.add_edge(prev, node, 1);
                         prev = node;
                     } else {
                         // increment node weight
                         path_indices.push(node.index());
-                        println!("Match Some 2 {}", node.index());
                         match self.graph.find_edge(prev, node) {
                             Some(edge) => {
                                 *self.graph.edge_weight_mut(edge).unwrap() += 1;
@@ -473,7 +469,6 @@ impl Poa {
                 AlignmentOperation::Ins(None) => {
                     let node = self.graph.add_node(seq[i]);
                     path_indices.push(node.index());
-                    println!("Ins None 2 {}", node.index());
                     if edge_not_connected {
                         self.graph.add_edge(prev, node, 1);
                     }
@@ -484,7 +479,6 @@ impl Poa {
                 AlignmentOperation::Ins(Some(_)) => {
                     let node = self.graph.add_node(seq[i]);
                     path_indices.push(node.index());
-                    println!("Ins Some 1 {}", node.index());
                     self.graph.add_edge(prev, node, 1);
                     prev = node;
                     i += 1;
@@ -500,7 +494,6 @@ impl Poa {
                 }
             }
         }
-        println!("path in add alignment {:?}", path_indices);
         path_indices
     }
 }

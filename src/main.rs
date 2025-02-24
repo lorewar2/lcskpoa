@@ -20,14 +20,12 @@ fn main() {
     let mismatch_score = -2;
     let gap_open_score = 2;
     let band_size = 250;
-    let seed = 1;
     let kmer_size = 3;
     
     //let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec());
     let mut old_aligner = Aligner2::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec(), i32::MIN, i32::MIN, band_size);
     // you have to keep the original graph otherwise these things change
-    let mut temp_vec: Vec<usize> = (0..seqs[0].len()).collect();
-    let mut all_paths = vec![temp_vec];
+    let mut all_paths = vec![(0..seqs[0].len()).collect()];
     let mut all_bases = vec![seqs[0].as_bytes().to_vec()];
     for index in 1..seqs.len() - 1 {
         let output_graph = old_aligner.graph();
@@ -73,8 +71,6 @@ fn main() {
         //aligner.global_simd(query);
         // we get the added path sequence and graph node indices when adding to graph
         let (obtained_temp_bases, obtained_temp_path) = old_aligner.custom(query).add_to_graph();
-        println!("Obtained bases at end {:?}", obtained_temp_bases);
-        println!("Obtained path at end {:?}", obtained_temp_path);
         all_bases.push(obtained_temp_bases);
         all_paths.push(obtained_temp_path);
         let time = now.elapsed().as_micros() as usize;

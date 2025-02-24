@@ -25,35 +25,22 @@ pub fn lcskpp_graph (
     if kmer_pos_vec.is_empty() {
         return (vec![], vec![],  0);
     }
-
     let k = k as u32;
     let mut events: Vec<(u32, u32, u32, Vec<usize>, Vec<u32>, Vec<u32>)> = Vec::new(); // x, idx, path, prev ,kmer nodes in greph)
     let mut max_ns = vec![0; num_of_paths];
     let mut max_bit_tree_path = vec![];
     // generate the required events
     for (idx, &(x, y)) in kmer_pos_vec.iter().enumerate() {
-        // to change the code to this shit
         assert!(y == kmer_graph_index[idx][0]);
-        // add the previous one as well
-        // IF END SAVE y - K - 1 NODE IF START SAVE y - 1 NODE (-1 if not available)
-        // added  graph node and graph node + k
         events.push((x, kmer_graph_index[idx][0], (idx + kmer_pos_vec.len()) as u32, kmer_path_vec[idx].clone(), kmers_previous_node_in_paths[idx].clone(), kmer_graph_index[idx].clone()));
         events.push((x + k - 1, *kmer_graph_index[idx].last().unwrap(), idx as u32, kmer_path_vec[idx].clone(), kmers_previous_node_in_paths[idx].clone(), kmer_graph_index[idx].clone()));
         for path in kmer_path_vec[idx].clone() {
             max_ns[path] = max(max_ns[path], x + k - 1);
-            max_ns[path] = max(max_ns[path], kmer_graph_index[idx][k as usize - 1]);
+            max_ns[path] = max(max_ns[path], *kmer_graph_index[idx].last().unwrap());
         }
     }
-    // ev.2 = ev.6[k as usize - 1]
-    // ev.1 = ev.6[0]
     // sorting is okay with topologically converted indices
     events.sort_unstable();
-    //println!("{:?}", kmer_pos_vec);
-    //for event in &events {
-        //println!("{:?}", event);
-    //}
-    //println!("DONE");
-    
     // generate empty fenwick trees, we need a tree for each path
     for (_index, n) in max_ns.iter().enumerate() {
         let max_col_dp: MaxBitTree<(u32, u32)> = MaxBitTree::new(*n as usize);
@@ -73,15 +60,13 @@ pub fn lcskpp_graph (
                     max_bit_tree_path[*path].set(tree_info.2 as usize, tree_info.1);
                 }
             }
-            //tree_update_vec = vec![];
+            tree_update_vec.clear();
         }
         // p is the match index
         let p = (ev.2 % kmer_pos_vec.len() as u32) as usize;
-        //println!("x:{} y_start:{} y_end:{} p:{} idx:{} paths:{:?}", ev.0, ev.1, ev.2, p, ev.3, ev.4);
-        // is start if higher than this
         let is_start = ev.2 >= (kmer_pos_vec.len() as u32);
+        // START
         if is_start {
-            //print!("IS START \n");
             dp[p].0 = k;
             dp[p].1 = -1;
             dp[p].2 = ev.5;
@@ -91,84 +76,65 @@ pub fn lcskpp_graph (
                 let path = ev.3[path_index];
                 let prev_node = ev.4[path_index];
                 if prev_node != u32::MAX {
-                    //println!("prev node value = {}", prev_node);
                     let (temp_value, temp_position) = max_bit_tree_path[path].get(prev_node as usize);
-                    //println!("temp value from fenwick tree {}", temp_value);
                     if (temp_value + k > dp[p].0) && (temp_value > 0) {
                         dp[p].0 = k + temp_value;
                         dp[p].1 = temp_position as i32;
                         best_dp = max(best_dp, (dp[p].0, p as i32, path));
-                        //println!("best_dp {}", best_dp.0);
                     }
                 }
             }
         } else {
-            //print!("IS END \n");
-            // See if this kmer continues a different kmer
+            // END
             if ev.0 >= k {
                 for path_index in 0..ev.3.len() {
                     let path = ev.3[path_index];
                     let prev_node = ev.4[path_index];
                     if prev_node != u32::MAX {
                         if let Ok(cont_idx) = kmer_pos_vec.binary_search(&(ev.0 - k, prev_node)) {
-                            //println!("!!!!!!!!!!");
                             let prev_score = dp[cont_idx].0;
                             //let candidate = (prev_score + 1, cont_idx as i32, prev_path);
                             if prev_score + 1 > dp[p].0 {
                                 //println!("CONTINUTING VALUE {}", dp[p].2.len());
                                 dp[p].0 = prev_score + 1;
                                 dp[p].1 = cont_idx as i32;
-                                dp[p].3 = dp[p].3 + 1;
+                                dp[p].3 = dp[p].3;
                                 dp[p].2 = vec![*dp[p].2.last().unwrap()];
                             }
                             best_dp = max(best_dp, (dp[p].0, p as i32, path));
-                            //println!("candidate location {} {}", ev.0 - k, prev_node);
-                            //println!("cont value from candidate p {} score {}", cont_idx, dp[p].0);
-                            //println!("best_dp {}", best_dp.0);
                         }
                     }
                 }
             }
             // set all trees which have this match as this // maybe update this in the next iteration to prevent query overlapping
             //  update required, current x, value,  index, paths (trees)
-                // ev.2 = ev.6[k as usize - 1]
-    // ev.1 = ev.6[0]
             tree_update_vec.push((ev.0, (dp[p].0, p as u32), ev.5[k as usize - 1], ev.3.clone()));
             tree_update_required_level = ev.0;
         }
     }
     let (best_score, mut prev_match, mut _path) = best_dp;
-    //println!("BEST SCORE: {} PREV_MATCH: {}", best_score, prev_match);
-    //println!("PATHS");
     let mut query_graph_path = vec![];
     let mut unconverted_query_graph_path = vec![];
     let mut last_node = usize::MAX;
     while prev_match >= 0 {
-        println!("prev match {} ", prev_match);
         dp[prev_match as usize].2.reverse();
-        let mut query_pos = dp[prev_match as usize].3 + dp[prev_match as usize].2.len() as u32  - 1;
-        println!("ORIGINAL Q POS {}", query_pos);
+        let mut query_pos = dp[prev_match as usize].3 + k  - 1;
         for node in &dp[prev_match as usize].2 {
-            
             let converted_node = topo_map[*node as usize];
             let current_node = *node as usize;
             if last_node == usize::MAX {
                 last_node = current_node;
             }
-            println!("q pos {}", query_pos);
             query_graph_path.push((query_pos as usize, converted_node));
             unconverted_query_graph_path.push((query_pos as usize, *node as usize));
             query_pos -= 1;
-            //println!("{} != {}", last_node, current_node);
             assert!(last_node >= current_node);
             last_node = current_node;
         }
-        //println!("");
         prev_match = dp[prev_match as usize].1;
     }
     query_graph_path.reverse();
     unconverted_query_graph_path.reverse();
-    //println!("{:?}", query_graph_path);
     (query_graph_path, unconverted_query_graph_path, best_score)
 }
 
