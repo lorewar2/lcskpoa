@@ -144,10 +144,10 @@ pub fn lcskpp_graph (
     let mut unconverted_query_graph_path = vec![];
     let mut last_node = usize::MAX;
     while prev_match >= 0 {
-        //println!("{} ", prev_match);
+        println!("prev match {} ", prev_match);
         dp[prev_match as usize].2.reverse();
         let mut query_pos = dp[prev_match as usize].3 + dp[prev_match as usize].2.len() as u32  - 1;
-        //println!("ORIGINAL Q POS {}", query_pos);
+        println!("ORIGINAL Q POS {}", query_pos);
         for node in &dp[prev_match as usize].2 {
             
             let converted_node = topo_map[*node as usize];
@@ -155,7 +155,7 @@ pub fn lcskpp_graph (
             if last_node == usize::MAX {
                 last_node = current_node;
             }
-            //println!("q pos {}", query_pos);
+            println!("q pos {}", query_pos);
             query_graph_path.push((query_pos as usize, converted_node));
             unconverted_query_graph_path.push((query_pos as usize, *node as usize));
             query_pos -= 1;
