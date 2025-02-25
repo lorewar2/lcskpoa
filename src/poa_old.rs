@@ -177,6 +177,7 @@ impl  Aligner {
     /// Add the alignment of the last query to the graph.
     pub fn add_to_graph(&mut self) -> (Vec<u8>, Vec<usize>) {
         let alignment = self.poa.recalculate_alignment(&self.traceback);
+        println!("HERE?");
         let path_indices = self.poa.add_alignment(&alignment, &self.query);
         let mut path_bases = vec![];
         for path_index in &path_indices {
@@ -343,6 +344,7 @@ impl Poa {
         let mut curr_node = traceback.last.index() + 1;
         let mut curr_query = traceback.cols;
         let final_score = traceback.get(curr_node, curr_query);
+        println!("old alignment score {}", final_score);
         loop {
             let mut current_alignment_operation = AlignmentOperation::Match(None);
             let current_cell_score = traceback.get(curr_node, curr_query);
@@ -378,7 +380,7 @@ impl Poa {
             // iterate to next
             curr_query = next_jump;
             curr_node = next_node;
-            //println!("curr node {} curr query {}", curr_node - 1, curr_query);
+            println!("curr node {} curr query {}", curr_node - 1, curr_query);
             // break point
             if prevs.len() == 0 || curr_query == 0 {
                 //if at end but not at start of query add bunch of ins(None)
@@ -393,8 +395,9 @@ impl Poa {
                     loop {
                         let prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(curr_node - 1), Incoming).collect();
                         if prevs.len() == 0 {break}
+                        println!("curr node {} prev {}", curr_node - 1, prevs[0].index());
                         ops.push(AlignmentOperation::Del(Some((0, prevs[0].index()))));
-                        curr_node = prevs[0].index();
+                        curr_node = prevs[0].index() + 1;
                     }
                 }
                 break;

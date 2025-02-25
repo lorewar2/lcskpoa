@@ -3,6 +3,7 @@ use petgraph::visit::Topo;
 use petgraph::{Directed, Graph, Incoming};
 pub const MIN_SCORE: i32 = -858_993_459; // negative infinity; see alignment/pairwise/mod.rs
 pub type POAGraph = Graph<u8, i32, Directed, usize>;
+use std::path;
 use std::simd::i32x8;
 use std::simd::cmp::SimdOrd;
 use std::collections::HashMap;
@@ -129,20 +130,28 @@ impl Aligner {
         }
     }
 
-    pub fn global_simd(&mut self, query: &Vec<u8>) -> &mut Self {
+    pub fn global_simd(&mut self, query: &Vec<u8>) -> (Vec<u8>, Vec<usize>) {
         self.query = query.to_vec();
         let simd_tracker = self.poa.custom_simd(query);
         let alignment = self.poa.recalculate_alignment(simd_tracker);
-        self.poa.add_alignment(&alignment, &self.query);
-        self
+        let path_indices = self.poa.add_alignment(&alignment, &self.query);
+        let mut path_bases = vec![];
+        for path_index in &path_indices {
+            path_bases.push(self.poa.graph.raw_nodes()[*path_index].weight);
+        }
+        (path_bases, path_indices)
     }
 
-    pub fn global_simd_banded(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, band_size: usize) -> &mut Self {
+    pub fn global_simd_banded(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, band_size: usize) -> (Vec<u8>, Vec<usize>) {
         self.query = query.to_vec();
         let simd_tracker = self.poa.custom_simd_banded(query, lcsk_path, band_size);
         let alignment = self.poa.recalculate_alignment(simd_tracker);
-        self.poa.add_alignment(&alignment, &self.query);
-        self
+        let path_indices = self.poa.add_alignment(&alignment, &self.query);
+        let mut path_bases = vec![];
+        for path_index in &path_indices {
+            path_bases.push(self.poa.graph.raw_nodes()[*path_index].weight);
+        }
+        (path_bases, path_indices)
     }
 
     /// Return alignment graph.
@@ -476,9 +485,9 @@ impl Poa {
                 }
                 simd_tracker.set(i, simd_index, max_vec);
                 f = max_vec;
-                print!("{:?} ", max_vec);
+                //print!("{:?} ", max_vec);
             }
-            println!("");
+            //println!("");
             index += 1;
         }
         simd_tracker
@@ -490,7 +499,7 @@ impl Poa {
         // loop until we reach a node with no incoming
         let mut current_node = simd_tracker.last_node;
         let mut current_query = simd_tracker.last_query - 1;
-
+        
         let simd_index = (current_query) / 8;
         let simd_inner_index = (current_query) % 8;
         let simd_vec_obtained = simd_tracker.get(current_node, simd_index);
@@ -508,11 +517,11 @@ impl Poa {
             let simd_vec_obtained = simd_tracker.get(current_node, simd_index);
             let current_cell_score = simd_vec_obtained[simd_inner_index];
             let mut next_jump = 0;
-            let mut next_node = 0;
+            let mut next_node = 1;
             // Check left if gap open difference with left
             let prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_node), Incoming).collect();
             let simd_prev_vec_obtained = simd_tracker.get(current_node, prev_simd_index);
-            if current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] - self.gap_open_score {
+            if current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.gap_open_score {
                 current_alignment_operation = AlignmentOperation::Ins(Some(current_node));
                 next_jump = current_query - 1;
                 next_node = current_node;
@@ -523,8 +532,9 @@ impl Poa {
                     // Top
                     let simd_vec_obtained = simd_tracker.get(i_p, simd_index);
                     let simd_prev_vec_obtained = simd_tracker.get(i_p, prev_simd_index);
-                    if current_cell_score == simd_vec_obtained[simd_inner_index] - self.gap_open_score {
-                        current_alignment_operation = AlignmentOperation::Del(None);
+                    if current_cell_score == simd_vec_obtained[simd_inner_index] + self.gap_open_score {
+                        //current_alignment_operation = AlignmentOperation::Del(None);
+                        current_alignment_operation = AlignmentOperation::Del(Some((0, current_node)));
                         next_jump = current_query;
                         next_node = i_p;
                     }
@@ -541,9 +551,20 @@ impl Poa {
             current_node = next_node;
             // Break point
             if prevs.len() == 0 || current_query == 0 {
-                if current_query > 0 {
-                    for _ in 0..current_query {
-                        ops.push(AlignmentOperation::Ins(None));
+                //if at end but not at start of query add bunch of ins(None)
+                if prevs.len() == 0 {
+                    if current_query > 0 {
+                        for _ in 0..current_query {
+                            ops.push(AlignmentOperation::Ins(None));
+                        }
+                    }
+                } else {
+                    // push del until we hit no prevs
+                    loop {
+                        let prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_query - 1), Incoming).collect();
+                        if prevs.len() == 0 {break}
+                        ops.push(AlignmentOperation::Del(Some((0, prevs[0].index()))));
+                        current_query = prevs[0].index();
                     }
                 }
                 ops.push(AlignmentOperation::Match(None));
@@ -557,22 +578,34 @@ impl Poa {
         }
     }
 
-    pub fn add_alignment(&mut self, aln: &Alignment, seq: &Vec<u8>) {
+    pub fn add_alignment(&mut self, aln: &Alignment, seq: &Vec<u8>) -> Vec<usize> {
+        let mut path_indices = vec![];
         let head = Topo::new(&self.graph).next(&self.graph).unwrap();
         let mut prev: NodeIndex<usize> = NodeIndex::new(head.index());
         let mut i: usize = 0;
         let mut edge_not_connected: bool = false;
+        let mut prev_is_match_none = false;
         for op in aln.operations.iter() {
             match op {
                 AlignmentOperation::Match(None) => {
                     let node: NodeIndex<usize> = NodeIndex::new(head.index());
                     if (seq[i] != self.graph.raw_nodes()[head.index()].weight) && (seq[i] != b'X') {
                         let node = self.graph.add_node(seq[i]);
+                        if !prev_is_match_none {
+                            path_indices.push(node.index());
+                        }   
+                        println!("match none 1 {}", node.index());
                         if edge_not_connected {
                             self.graph.add_edge(prev, node, 1);
                         }
                         edge_not_connected = false;
                         prev = node;
+                    }
+                    else {
+                        if !prev_is_match_none {
+                            path_indices.push(node.index());
+                        }   
+                        println!("match none 2 {}", node.index());
                     }
                     if edge_not_connected {
                         self.graph.add_edge(prev, node, 1);
@@ -580,14 +613,20 @@ impl Poa {
                         edge_not_connected = false;
                     }
                     i += 1;
+                    prev_is_match_none = true;
                 }
                 AlignmentOperation::Match(Some((_, p))) => {
                     let node = NodeIndex::new(*p);
                     if (seq[i] != self.graph.raw_nodes()[*p].weight) && (seq[i] != b'X') {
                         let node = self.graph.add_node(seq[i]);
+                        path_indices.push(node.index());
+                        println!("match some 1 {}", node.index());
                         self.graph.add_edge(prev, node, 1);
                         prev = node;
                     } else {
+                        // increment node weight
+                        path_indices.push(node.index());
+                        println!("match some 2 {}", node.index());
                         match self.graph.find_edge(prev, node) {
                             Some(edge) => {
                                 *self.graph.edge_weight_mut(edge).unwrap() += 1;
@@ -604,6 +643,10 @@ impl Poa {
                 }
                 AlignmentOperation::Ins(None) => {
                     let node = self.graph.add_node(seq[i]);
+                    if !prev_is_match_none {
+                        path_indices.push(node.index());
+                    } 
+                    println!("Ins None 1 {}", node.index());
                     if edge_not_connected {
                         self.graph.add_edge(prev, node, 1);
                     }
@@ -613,16 +656,25 @@ impl Poa {
                 }
                 AlignmentOperation::Ins(Some(_)) => {
                     let node = self.graph.add_node(seq[i]);
+                    path_indices.push(node.index());
+                    println!("Ins Some 1 {}", node.index());
                     self.graph.add_edge(prev, node, 1);
                     prev = node;
                     i += 1;
                 }
-                AlignmentOperation::Del(_) => {}
+                // we should only have to skip over deleted nodes and xclip
+                AlignmentOperation::Del(Some((_, x))) => {
+                    path_indices.push(*x);
+                    println!("Del Some 1 {}", x);
+                } 
+                AlignmentOperation::Del(None) => {} 
                 AlignmentOperation::Xclip(_) => {}
                 AlignmentOperation::Yclip(_, r) => {
                     i = *r;
                 }
             }
         }
+        println!("{:?}", path_indices);
+        path_indices
     }
 }

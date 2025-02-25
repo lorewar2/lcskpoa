@@ -3,14 +3,54 @@ use fxhash::FxHasher;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
-use petgraph::{Directed, Graph};
+use petgraph::{Directed, Graph, visit::Topo, dot::Dot};
 use itertools::Itertools;
 use fxhash::FxHashMap;
 
 pub type POAGraph = Graph<u8, i32, Directed, usize>;
 pub type HashMapFx<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
-// Lets write comments for this and debug
+pub fn lcsk_pipeline (output_graph: &POAGraph, query: &Vec<u8>, kmer_size: usize, all_paths: &Vec<Vec<usize>>, all_bases: &Vec<Vec<u8>>) -> Vec<(usize, usize)> {
+    println!("{:?}", Dot::new(&output_graph.map(|_, n| (*n) as char, |_, e| *e)));
+    let mut topo = Topo::new(&output_graph);
+    let mut index_topo_index_value_graph_index_vec = vec![];
+    let mut key_graph_index_value_topo_index_map = HashMap::new();
+    let mut incrementing_index: usize = 0;
+    let mut temp_paths_converted = vec![];
+    // convert the all paths to topo indices for the current iteration of graph
+    while let Some(node) = topo.next(&output_graph) {
+        index_topo_index_value_graph_index_vec.push(node.index());
+        key_graph_index_value_topo_index_map.insert(node.index(), incrementing_index);
+        incrementing_index += 1;
+    }
+    for path in all_paths {
+        let mut temp_path = vec![];
+        for node_id in path {
+            temp_path.push(key_graph_index_value_topo_index_map[node_id]);
+        }
+        temp_paths_converted.push(temp_path);
+    }
+    
+    for index_2 in 0..all_bases.len() {
+        let mut converted = vec![];
+        for entry in &temp_paths_converted[index_2] {
+            converted.push(index_topo_index_value_graph_index_vec[*entry as usize]);
+        }
+        println!("{} {:?} {:?}", index_2, all_bases[index_2], converted);
+    }
+    let (kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, kmer_graph_path) = find_kmer_matches(&query, &all_bases, &temp_paths_converted, kmer_size);
+    for index_1 in 0..kmer_path_vec.len() {
+        let mut converted = vec![];
+        for entry in &kmer_graph_path[index_1] {
+            converted.push(index_topo_index_value_graph_index_vec[*entry as usize]);
+        }
+        println!("{:?} {:?} original {:?} topo {:?}",kmer_pos_vec[index_1], kmer_path_vec[index_1], converted, kmer_graph_path[index_1]);
+    }
+    let (lcsk_path, _lcsk_path_unconverted, _k_new_score) = lcskpp_graph(kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, temp_paths_converted.len(), kmer_size, kmer_graph_path, &index_topo_index_value_graph_index_vec);
+    //println!("{:?}", lcsk_path);
+    lcsk_path
+}
+
 pub fn lcskpp_graph (
     kmer_pos_vec: Vec<(u32, u32)>,
     kmer_path_vec: Vec<Vec<usize>>,
@@ -57,6 +97,7 @@ pub fn lcskpp_graph (
             // update trees here
             for tree_info in &tree_update_vec {
                 for path in &tree_info.3 {
+                    println!("HERE");
                     max_bit_tree_path[*path].set(tree_info.2 as usize, tree_info.1);
                 }
             }
@@ -76,7 +117,9 @@ pub fn lcskpp_graph (
                 let path = ev.3[path_index];
                 let prev_node = ev.4[path_index];
                 if prev_node != u32::MAX {
+                    println!("Bit tree {} {}", prev_node as usize, path);
                     let (temp_value, temp_position) = max_bit_tree_path[path].get(prev_node as usize);
+                    println!("DONE HERE");
                     if (temp_value + k > dp[p].0) && (temp_value > 0) {
                         dp[p].0 = k + temp_value;
                         dp[p].1 = temp_position as i32;
@@ -119,6 +162,11 @@ pub fn lcskpp_graph (
     while prev_match >= 0 {
         dp[prev_match as usize].2.reverse();
         let mut query_pos = dp[prev_match as usize].3 + k  - 1;
+        println!("query pos {}", query_pos);
+        println!("dp.0 {}", dp[prev_match as usize].0);
+        println!("dp.1 {}", dp[prev_match as usize].1);
+        println!("dp.2 {:?}", dp[prev_match as usize].2);
+        println!("dp.3 {}", dp[prev_match as usize].3);
         for node in &dp[prev_match as usize].2 {
             let converted_node = topo_map[*node as usize];
             let current_node = *node as usize;
@@ -128,6 +176,7 @@ pub fn lcskpp_graph (
             query_graph_path.push((query_pos as usize, converted_node));
             unconverted_query_graph_path.push((query_pos as usize, *node as usize));
             query_pos -= 1;
+            println!("last_node {} == current node {}", last_node, current_node);
             assert!(last_node >= current_node);
             last_node = current_node;
         }
