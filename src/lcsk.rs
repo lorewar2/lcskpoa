@@ -1,6 +1,6 @@
 use crate::bit_tree::MaxBitTree;
 use fxhash::FxHasher;
-use std::cmp::max;
+use std::{cmp::max};
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 use petgraph::{Directed, Graph, visit::Topo, dot::Dot};
@@ -11,7 +11,7 @@ pub type POAGraph = Graph<u8, i32, Directed, usize>;
 pub type HashMapFx<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
 pub fn lcsk_pipeline (output_graph: &POAGraph, query: &Vec<u8>, kmer_size: usize, all_paths: &Vec<Vec<usize>>, all_bases: &Vec<Vec<u8>>) -> Vec<(usize, usize)> {
-    println!("{:?}", Dot::new(&output_graph.map(|_, n| (*n) as char, |_, e| *e)));
+    //println!("{:?}", Dot::new(&output_graph.map(|_, n| (*n) as char, |_, e| *e)));
     let mut topo = Topo::new(&output_graph);
     let mut index_topo_index_value_graph_index_vec = vec![];
     let mut key_graph_index_value_topo_index_map = HashMap::new();
@@ -36,7 +36,7 @@ pub fn lcsk_pipeline (output_graph: &POAGraph, query: &Vec<u8>, kmer_size: usize
         for entry in &temp_paths_converted[index_2] {
             converted.push(index_topo_index_value_graph_index_vec[*entry as usize]);
         }
-        println!("{} {:?} {:?}", index_2, all_bases[index_2], converted);
+        //println!("{} {:?} {:?}", index_2, all_bases[index_2], converted);
     }
     let (kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, kmer_graph_path) = find_kmer_matches(&query, &all_bases, &temp_paths_converted, kmer_size);
     for index_1 in 0..kmer_path_vec.len() {
@@ -44,7 +44,7 @@ pub fn lcsk_pipeline (output_graph: &POAGraph, query: &Vec<u8>, kmer_size: usize
         for entry in &kmer_graph_path[index_1] {
             converted.push(index_topo_index_value_graph_index_vec[*entry as usize]);
         }
-        println!("{:?} {:?} original {:?} topo {:?}",kmer_pos_vec[index_1], kmer_path_vec[index_1], converted, kmer_graph_path[index_1]);
+        //println!("{:?} {:?} original {:?} topo {:?}",kmer_pos_vec[index_1], kmer_path_vec[index_1], converted, kmer_graph_path[index_1]);
     }
     let (lcsk_path, _lcsk_path_unconverted, _k_new_score) = lcskpp_graph(kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, temp_paths_converted.len(), kmer_size, kmer_graph_path, &index_topo_index_value_graph_index_vec);
     //println!("{:?}", lcsk_path);
@@ -67,23 +67,20 @@ pub fn lcskpp_graph (
     }
     let k = k as u32;
     let mut events: Vec<(u32, u32, u32, Vec<usize>, Vec<u32>, Vec<u32>)> = Vec::new(); // x, idx, path, prev ,kmer nodes in greph)
-    let mut max_ns = vec![0; num_of_paths];
+    let mut max_ns = 0;
     let mut max_bit_tree_path = vec![];
     // generate the required events
     for (idx, &(x, y)) in kmer_pos_vec.iter().enumerate() {
         assert!(y == kmer_graph_index[idx][0]);
         events.push((x, kmer_graph_index[idx][0], (idx + kmer_pos_vec.len()) as u32, kmer_path_vec[idx].clone(), kmers_previous_node_in_paths[idx].clone(), kmer_graph_index[idx].clone()));
         events.push((x + k - 1, *kmer_graph_index[idx].last().unwrap(), idx as u32, kmer_path_vec[idx].clone(), kmers_previous_node_in_paths[idx].clone(), kmer_graph_index[idx].clone()));
-        for path in kmer_path_vec[idx].clone() {
-            max_ns[path] = max(max_ns[path], x + k - 1);
-            max_ns[path] = max(max_ns[path], *kmer_graph_index[idx].last().unwrap());
-        }
+        max_ns = max(max_ns, max(x + k - 1, *kmer_graph_index[idx].last().unwrap() + 1));
     }
     // sorting is okay with topologically converted indices
     events.sort_unstable();
     // generate empty fenwick trees, we need a tree for each path
-    for (_index, n) in max_ns.iter().enumerate() {
-        let max_col_dp: MaxBitTree<(u32, u32)> = MaxBitTree::new(*n as usize);
+    for _ in 0..num_of_paths {
+        let max_col_dp: MaxBitTree<(u32, u32)> = MaxBitTree::new(max_ns as usize);
         max_bit_tree_path.push(max_col_dp);
     }
     let mut dp: Vec<(u32, i32, Vec<u32>, u32)> = Vec::with_capacity(events.len()); //index is index score prev match, corrosponding graph nodes, query pos
@@ -97,7 +94,6 @@ pub fn lcskpp_graph (
             // update trees here
             for tree_info in &tree_update_vec {
                 for path in &tree_info.3 {
-                    println!("HERE");
                     max_bit_tree_path[*path].set(tree_info.2 as usize, tree_info.1);
                 }
             }
@@ -117,10 +113,9 @@ pub fn lcskpp_graph (
                 let path = ev.3[path_index];
                 let prev_node = ev.4[path_index];
                 if prev_node != u32::MAX {
-                    println!("Bit tree {} {}", prev_node as usize, path);
                     let (temp_value, temp_position) = max_bit_tree_path[path].get(prev_node as usize);
-                    println!("DONE HERE");
-                    if (temp_value + k > dp[p].0) && (temp_value > 0) {
+                    if (temp_value + k > dp[p].0) && (temp_value > 0) && (dp[p].2.first().unwrap() > dp[temp_position as usize].2.last().unwrap()) {
+                        //println!("temp position {} value {}", temp_position, temp_value + k);
                         dp[p].0 = k + temp_value;
                         dp[p].1 = temp_position as i32;
                         best_dp = max(best_dp, (dp[p].0, p as i32, path));
@@ -137,8 +132,8 @@ pub fn lcskpp_graph (
                         if let Ok(cont_idx) = kmer_pos_vec.binary_search(&(ev.0 - k, prev_node)) {
                             let prev_score = dp[cont_idx].0;
                             //let candidate = (prev_score + 1, cont_idx as i32, prev_path);
-                            if prev_score + 1 > dp[p].0 {
-                                //println!("CONTINUTING VALUE {}", dp[p].2.len());
+                            // we should old do this if prev node is > than dp[p].2.last()
+                            if (prev_score + 1 > dp[p].0) && (prev_node > *dp[p].2.last().unwrap()) {
                                 dp[p].0 = prev_score + 1;
                                 dp[p].1 = cont_idx as i32;
                                 dp[p].3 = dp[p].3;
@@ -161,12 +156,8 @@ pub fn lcskpp_graph (
     let mut last_node = usize::MAX;
     while prev_match >= 0 {
         dp[prev_match as usize].2.reverse();
+        //println!("prev match {}", prev_match);
         let mut query_pos = dp[prev_match as usize].3 + k  - 1;
-        println!("query pos {}", query_pos);
-        println!("dp.0 {}", dp[prev_match as usize].0);
-        println!("dp.1 {}", dp[prev_match as usize].1);
-        println!("dp.2 {:?}", dp[prev_match as usize].2);
-        println!("dp.3 {}", dp[prev_match as usize].3);
         for node in &dp[prev_match as usize].2 {
             let converted_node = topo_map[*node as usize];
             let current_node = *node as usize;
@@ -176,7 +167,7 @@ pub fn lcskpp_graph (
             query_graph_path.push((query_pos as usize, converted_node));
             unconverted_query_graph_path.push((query_pos as usize, *node as usize));
             query_pos -= 1;
-            println!("last_node {} == current node {}", last_node, current_node);
+            //println!("last node {} current node {}", last_node, current_node);
             assert!(last_node >= current_node);
             last_node = current_node;
         }
@@ -239,10 +230,24 @@ pub fn find_kmer_matches(query: &[u8], graph_sequences: &Vec<Vec<u8>>, graph_ids
         }
     }
     for (key, value) in loc_to_data.iter().sorted().into_iter() {
-        kmers_result_vec.push(*key);
-        kmers_paths.push(value.1.clone());
-        kmers_previous_node_in_paths.push(value.0.clone());
-        kmer_graph_path.push(value.2.clone());
+        let mut path_good = true;
+        // check graph path before pushing in 
+        let mut last_node = 0;
+        for node in &value.2 {
+            if *node > last_node {
+                last_node = *node;
+            }
+            else {
+                path_good = false;
+                break;
+            }
+        }
+        if path_good {
+            kmers_result_vec.push(*key);
+            kmers_paths.push(value.1.clone());
+            kmers_previous_node_in_paths.push(value.0.clone());
+            kmer_graph_path.push(value.2.clone());
+        }
         //println!("{:?} / {:?}", key, value);
     }
     (kmers_result_vec, kmers_paths, kmers_previous_node_in_paths, kmer_graph_path)

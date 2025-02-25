@@ -585,6 +585,7 @@ impl Poa {
         let mut i: usize = 0;
         let mut edge_not_connected: bool = false;
         let mut prev_is_match_none = false;
+        let mut started_alignment = false;
         for op in aln.operations.iter() {
             match op {
                 AlignmentOperation::Match(None) => {
@@ -594,18 +595,12 @@ impl Poa {
                         if !prev_is_match_none {
                             path_indices.push(node.index());
                         }   
-                        println!("match none 1 {}", node.index());
+                        //println!("match none 1 {}", node.index());
                         if edge_not_connected {
                             self.graph.add_edge(prev, node, 1);
                         }
                         edge_not_connected = false;
                         prev = node;
-                    }
-                    else {
-                        if !prev_is_match_none {
-                            path_indices.push(node.index());
-                        }   
-                        println!("match none 2 {}", node.index());
                     }
                     if edge_not_connected {
                         self.graph.add_edge(prev, node, 1);
@@ -616,17 +611,18 @@ impl Poa {
                     prev_is_match_none = true;
                 }
                 AlignmentOperation::Match(Some((_, p))) => {
+                    started_alignment = true;
                     let node = NodeIndex::new(*p);
                     if (seq[i] != self.graph.raw_nodes()[*p].weight) && (seq[i] != b'X') {
                         let node = self.graph.add_node(seq[i]);
                         path_indices.push(node.index());
-                        println!("match some 1 {}", node.index());
+                        //println!("match some 1 {}", node.index());
                         self.graph.add_edge(prev, node, 1);
                         prev = node;
                     } else {
                         // increment node weight
                         path_indices.push(node.index());
-                        println!("match some 2 {}", node.index());
+                        //println!("match some 2 {}", node.index());
                         match self.graph.find_edge(prev, node) {
                             Some(edge) => {
                                 *self.graph.edge_weight_mut(edge).unwrap() += 1;
@@ -642,11 +638,12 @@ impl Poa {
                     i += 1;
                 }
                 AlignmentOperation::Ins(None) => {
+                    started_alignment = true;
                     let node = self.graph.add_node(seq[i]);
                     if !prev_is_match_none {
                         path_indices.push(node.index());
                     } 
-                    println!("Ins None 1 {}", node.index());
+                    //println!("Ins None 1 {}", node.index());
                     if edge_not_connected {
                         self.graph.add_edge(prev, node, 1);
                     }
@@ -655,17 +652,22 @@ impl Poa {
                     i += 1;
                 }
                 AlignmentOperation::Ins(Some(_)) => {
+                    started_alignment = true;
                     let node = self.graph.add_node(seq[i]);
                     path_indices.push(node.index());
-                    println!("Ins Some 1 {}", node.index());
+                    //println!("Ins Some 1 {}", node.index());
                     self.graph.add_edge(prev, node, 1);
                     prev = node;
                     i += 1;
                 }
                 // we should only have to skip over deleted nodes and xclip
                 AlignmentOperation::Del(Some((_, x))) => {
-                    path_indices.push(*x);
-                    println!("Del Some 1 {}", x);
+                    
+                    if !started_alignment {
+                        path_indices.push(*x);
+                        //println!("Del Some 1 {}", x);
+                    }
+                    
                 } 
                 AlignmentOperation::Del(None) => {} 
                 AlignmentOperation::Xclip(_) => {}
@@ -674,7 +676,7 @@ impl Poa {
                 }
             }
         }
-        println!("{:?}", path_indices);
+        //println!("{:?}", path_indices);
         path_indices
     }
 }

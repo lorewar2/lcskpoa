@@ -12,15 +12,14 @@ mod bit_tree;
 use crate::lcsk::lcsk_pipeline;
 
 fn main() {
-    let seed = 116;
-    for seed in 0..1000{
+    for seed in 0..10_000{
         println!("seed {}", seed);
-        let seqs = get_random_sequences_from_generator(10, 8, seed);
+        let seqs = get_random_sequences_from_generator(30_000, 8, seed);
         let match_score = 2;
         let mismatch_score = -2;
         let gap_open_score = 2;
-        let band_size = 10;
-        let kmer_size = 2;
+        let band_size = 300;
+        let kmer_size = 12;
         
         let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec());
         let mut old_aligner = Aligner2::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec(), i32::MIN, i32::MIN, band_size);
@@ -28,20 +27,15 @@ fn main() {
         let mut all_paths = vec![(0..seqs[0].len()).collect()];
         let mut all_bases = vec![seqs[0].as_bytes().to_vec()];
         for index in 1..seqs.len() - 1 {
-            println!("Running {} seq {:?}", index, seqs[index]);
+            //println!("Running {} seq {:?}", index, seqs[index]);
             let query = &seqs[index].as_bytes().to_vec();
             let output_graph = aligner.graph();
             let lcsk_path = lcsk_pipeline (output_graph, query, kmer_size, &all_paths, &all_bases);
             let (obtained_temp_bases, obtained_temp_path) = aligner.global_simd_banded(query, &lcsk_path, band_size as usize);
             //let (obtained_temp_bases, obtained_temp_path) = aligner.global_simd(query);
-            println!("THIS");
             old_aligner.custom(query).add_to_graph();
-            println!("done?");
             all_bases.push(obtained_temp_bases);
             all_paths.push(obtained_temp_path);
-            if index > 1 {
-                //break;
-            }
         }
     }
 }
