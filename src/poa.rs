@@ -3,7 +3,6 @@ use petgraph::visit::Topo;
 use petgraph::{Directed, Graph, Incoming};
 pub const MIN_SCORE: i32 = -858_993_459; // negative infinity; see alignment/pairwise/mod.rs
 pub type POAGraph = Graph<u8, i32, Directed, usize>;
-use std::path;
 use std::simd::i32x8;
 use std::simd::cmp::SimdOrd;
 use std::collections::HashMap;
@@ -123,6 +122,14 @@ pub struct Aligner {
 
 impl Aligner {
     /// Create new instance.
+    pub fn empty (match_score: i32, mismatch_score: i32, gap_open_score: i32,_band_size: i32) -> Self {
+        let reference = &vec![65];
+        Aligner {
+            query: reference.to_vec(),
+            poa: Poa::from_string(match_score, mismatch_score, gap_open_score,  reference),
+        }
+    }
+
     pub fn new(match_score: i32, mismatch_score: i32, gap_open_score: i32, reference: &Vec<u8>) -> Self {
         Aligner {
             query: reference.to_vec(),
@@ -154,6 +161,19 @@ impl Aligner {
         (path_bases, path_indices)
     }
 
+    pub fn global_simd_banded_threaded(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, bandwidth: usize, section_graph: Graph<u8, i32, Directed, usize>) -> i32 {
+        self.poa.graph = section_graph;
+        self.query = query.to_vec();
+        let simd_tracker = self.poa.custom_simd_banded(query, lcsk_path, bandwidth);
+        let current_node = simd_tracker.last_node;
+        let current_query = simd_tracker.last_query - 1;
+        let simd_index = (current_query) / 8;
+        let simd_inner_index = (current_query) % 8;
+        let simd_vec_obtained = simd_tracker.get(current_node, simd_index);
+        let final_score = simd_vec_obtained[simd_inner_index];
+        final_score
+    }
+    
     /// Return alignment graph.
     pub fn graph(&self) -> &POAGraph {
         &self.poa.graph
