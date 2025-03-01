@@ -19,7 +19,7 @@ pub enum AlignmentOperation {
 #[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct Alignment {
     pub score: i32,
-    operations: Vec<AlignmentOperation>,
+    pub operations: Vec<AlignmentOperation>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -153,6 +153,7 @@ impl Aligner {
         self.query = query.to_vec();
         let simd_tracker = self.poa.custom_simd_banded(query, lcsk_path, band_size);
         let alignment = self.poa.recalculate_alignment(simd_tracker);
+        println!("one graph alignment {:?}", alignment.operations);
         let path_indices = self.poa.add_alignment(&alignment, &self.query);
         let mut path_bases = vec![];
         for path_index in &path_indices {
@@ -161,18 +162,13 @@ impl Aligner {
         (path_bases, path_indices)
     }
 
-    pub fn global_simd_banded_threaded(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, bandwidth: usize, section_graph: Graph<u8, i32, Directed, usize>) -> i32 {
+    pub fn global_simd_banded_threaded(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, bandwidth: usize, section_graph: Graph<u8, i32, Directed, usize>, section_node_tracker: Vec<usize>) -> Alignment {
         self.poa.graph = section_graph;
         self.query = query.to_vec();
         let simd_tracker = self.poa.custom_simd(query);
-        let current_node = simd_tracker.last_node;
-        let current_query = simd_tracker.last_query - 1;
-        let simd_index = (current_query) / 8;
-        let simd_inner_index = (current_query) % 8;
-        let simd_vec_obtained = simd_tracker.get(current_node, simd_index);
-        let final_score = simd_vec_obtained[simd_inner_index];
-        println!("score {}", final_score);
-        final_score
+        // use simd_tracker and node tracker to get the alignment
+        let alignment = self.poa.recalculate_alignment_for_threaded (simd_tracker, section_node_tracker);
+        alignment
     }
     
     /// Return alignment graph.
@@ -599,6 +595,90 @@ impl Poa {
         }
     }
 
+    pub fn recalculate_alignment_for_threaded (&mut self, simd_tracker: SimdTracker, section_node_tracker: Vec<usize>) -> Alignment {
+        // Get the alignment by backtracking and recalculating stuff
+        let mut ops: Vec<AlignmentOperation> = vec![];
+        // loop until we reach a node with no incoming
+        let mut current_node = simd_tracker.last_node;
+        let mut current_query = simd_tracker.last_query - 1;
+        
+        let simd_index = (current_query) / 8;
+        let simd_inner_index = (current_query) % 8;
+        let simd_vec_obtained = simd_tracker.get(current_node, simd_index);
+        let final_score = simd_vec_obtained[simd_inner_index];
+        //println!("simd score: {} vec {:?} {} {} {:?}", final_score, simd_vec_obtained, simd_index, simd_inner_index, simd_tracker.start_end_tracker[current_node]);
+        loop {
+            let mut current_alignment_operation = AlignmentOperation::Match(None);
+            //check the score ins left of query
+            let prev_simd_index = (current_query - 1) / 8;
+            let prev_simd_inner_index = (current_query - 1) % 8;
+
+            let simd_index = (current_query) / 8;
+            let simd_inner_index = (current_query) % 8;
+
+            let simd_vec_obtained = simd_tracker.get(current_node, simd_index);
+            let current_cell_score = simd_vec_obtained[simd_inner_index];
+            let mut next_jump = 0;
+            let mut next_node = 1;
+            // Check left if gap open difference with left
+            let prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_node), Incoming).collect();
+            let simd_prev_vec_obtained = simd_tracker.get(current_node, prev_simd_index);
+            if current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.gap_open_score {
+                current_alignment_operation = AlignmentOperation::Ins(Some(section_node_tracker[current_node]));
+                next_jump = current_query - 1;
+                next_node = current_node;
+            }
+            else {
+                for prev in &prevs {
+                    let i_p = prev.index();
+                    // Top
+                    let simd_vec_obtained = simd_tracker.get(i_p, simd_index);
+                    let simd_prev_vec_obtained = simd_tracker.get(i_p, prev_simd_index);
+                    if current_cell_score == simd_vec_obtained[simd_inner_index] + self.gap_open_score {
+                        //current_alignment_operation = AlignmentOperation::Del(None);
+                        current_alignment_operation = AlignmentOperation::Del(Some((0, section_node_tracker[current_node])));
+                        next_jump = current_query;
+                        next_node = i_p;
+                    }
+                    // Diagonal
+                    else if (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.match_score as i32) || (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.mismatch_score as i32) {
+                        current_alignment_operation = AlignmentOperation::Match(Some((section_node_tracker[i_p], section_node_tracker[current_node])));
+                        next_jump = current_query - 1;
+                        next_node = i_p;
+                    }
+                }
+            }
+            ops.push(current_alignment_operation);
+            current_query = next_jump;
+            current_node = next_node;
+            // Break point
+            if prevs.len() == 0 || current_query == 0 {
+                //if at end but not at start of query add bunch of ins(None)
+                if prevs.len() == 0 {
+                    if current_query > 0 {
+                        for _ in 0..current_query {
+                            ops.push(AlignmentOperation::Ins(None));
+                        }
+                    }
+                } else {
+                    // push del until we hit no prevs
+                    loop {
+                        let prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_query - 1), Incoming).collect();
+                        if prevs.len() == 0 {break}
+                        ops.push(AlignmentOperation::Del(Some((0, section_node_tracker[prevs[0].index()]))));
+                        current_query = prevs[0].index();
+                    }
+                }
+                ops.push(AlignmentOperation::Match(None));
+                break;
+            }
+        }
+        ops.reverse();
+        Alignment {
+            score: final_score as i32,
+            operations: ops
+        }
+    }
     pub fn add_alignment(&mut self, aln: &Alignment, seq: &Vec<u8>) -> Vec<usize> {
         let mut path_indices = vec![];
         let head = Topo::new(&self.graph).next(&self.graph).unwrap();

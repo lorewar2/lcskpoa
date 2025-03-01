@@ -3,7 +3,7 @@ use fxhash::FxHasher;
 use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
-use petgraph::{Directed, Graph, visit::Topo, dot::Dot, Incoming, Outgoing};
+use petgraph::{Directed, Graph, visit::Topo, Incoming, Outgoing};
 use petgraph::graph::NodeIndex;
 use itertools::Itertools;
 use fxhash::FxHashMap;
@@ -11,7 +11,7 @@ use fxhash::FxHashMap;
 pub type POAGraph = Graph<u8, i32, Directed, usize>;
 pub type HashMapFx<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
-pub fn threaded_lcsk_pipeline (output_graph: &POAGraph, query: &Vec<u8>, kmer_size: usize, all_paths: &Vec<Vec<usize>>, all_bases: &Vec<Vec<u8>>, cut_limit: usize) -> (Vec<usize>, Vec<Graph<u8, i32, Directed, usize>>, Vec<usize>, Vec<Vec<u8>>, Vec<Vec<(usize, usize)>>) {
+pub fn threaded_lcsk_pipeline (output_graph: &POAGraph, query: &Vec<u8>, kmer_size: usize, all_paths: &Vec<Vec<usize>>, all_bases: &Vec<Vec<u8>>, cut_limit: usize) -> (Vec<usize>, Vec<Graph<u8, i32, Directed, usize>>, Vec<Vec<usize>>, Vec<Vec<u8>>, Vec<Vec<(usize, usize)>>) {
     //println!("{:?}", Dot::new(&output_graph.map(|_, n| (*n) as char, |_, e| *e)));
     let mut topo = Topo::new(&output_graph);
     let mut index_topo_index_value_graph_index_vec = vec![];
@@ -49,8 +49,8 @@ pub fn threaded_lcsk_pipeline (output_graph: &POAGraph, query: &Vec<u8>, kmer_si
     }
     let (lcsk_path, lcsk_path_unconverted, _k_new_score) = lcskpp_graph(kmer_pos_vec, kmer_path_vec, kmers_previous_node_in_paths, temp_paths_converted.len(), kmer_size, kmer_graph_path, &index_topo_index_value_graph_index_vec);
     //println!("{:?}", lcsk_path);
-    let (anchors, section_graphs, _node_tracker, section_queries, section_lcsks) = anchoring_lcsk_path_for_threading (&lcsk_path_unconverted, &lcsk_path, all_paths.len(), output_graph, cut_limit,  query.len(), index_topo_index_value_graph_index_vec, &query);
-    (anchors, section_graphs, _node_tracker, section_queries, section_lcsks)
+    let (anchors, section_graphs, section_node_trackers, section_queries, section_lcsks) = anchoring_lcsk_path_for_threading (&lcsk_path_unconverted, &lcsk_path, all_paths.len(), output_graph, cut_limit,  query.len(), index_topo_index_value_graph_index_vec, &query);
+    (anchors, section_graphs, section_node_trackers, section_queries, section_lcsks)
 }
 
 pub fn lcsk_pipeline (output_graph: &POAGraph, query: &Vec<u8>, kmer_size: usize, all_paths: &Vec<Vec<usize>>, all_bases: &Vec<Vec<u8>>) -> Vec<(usize, usize)> {
@@ -104,7 +104,7 @@ pub fn anchoring_lcsk_path_for_threading (
     query_length: usize,
     topo_indices: Vec<usize>,
     query: &Vec<u8>)
-    -> (Vec<usize>, Vec<Graph<u8, i32, Directed, usize>>, Vec<usize>, Vec<Vec<u8>>, Vec<Vec<(usize, usize)>>)
+    -> (Vec<usize>, Vec<Graph<u8, i32, Directed, usize>>, Vec<Vec<usize>>, Vec<Vec<u8>>, Vec<Vec<(usize, usize)>>)
     {
     let mut current_cut_limit = cut_limit;
     let mut section_graphs: Vec<Graph<u8, i32, Directed, usize>> = vec![];
@@ -115,6 +115,8 @@ pub fn anchoring_lcsk_path_for_threading (
     // add the head node to first graph
     let mut section_graph: Graph<u8, i32, Directed, usize> = Graph::default();
     let mut node_tracker: Vec<usize> = vec![0; graph.node_count()];
+    let mut section_node_trackers: Vec<Vec<usize>> = vec![];
+    let mut temp_node_tracker_for_section: Vec<usize> = vec![];
     let mut this_is_head_node = true;
     let mut cut_fail_times = 0;
     let cut_fail_limit = 1000; // for pacbio, to run cleanly
@@ -132,6 +134,7 @@ pub fn anchoring_lcsk_path_for_threading (
             // check if this node has any incoming edges if so save them to the new graphs node
             let added_node = section_graph.add_node(graph.raw_nodes()[topo_indices[topo_indices_index]].weight);
             node_tracker[topo_indices[topo_indices_index]] = added_node.index();
+            temp_node_tracker_for_section.push(topo_indices[topo_indices_index]);
             println!("Now adding node {} node index {} lcsk node index {}", added_node.index(), topo_indices[topo_indices_index], node_index);
             let incoming_nodes: Vec<NodeIndex<usize>> = graph.neighbors_directed(NodeIndex::new(topo_indices[topo_indices_index]), Incoming).collect();
             if this_is_head_node == false {
@@ -167,6 +170,8 @@ pub fn anchoring_lcsk_path_for_threading (
             if try_to_make_the_cut(graph, node_index, temp_num_seq) {
                 // put the graph in vector and make new graph
                 //println!("{:?}", Dot::new(&section_graph.map(|_, n| (*n) as char, |_, e| *e)));
+                section_node_trackers.push(temp_node_tracker_for_section.clone());
+                temp_node_tracker_for_section.clear();
                 section_graphs.push(section_graph);
                 section_graph = Graph::default();
                 //println!("Cut successful");
@@ -226,6 +231,7 @@ pub fn anchoring_lcsk_path_for_threading (
         }
         let added_node = section_graph.add_node(graph.raw_nodes()[topo_indices[topo_indices_index]].weight);
         node_tracker[topo_indices[topo_indices_index]] = added_node.index();
+        temp_node_tracker_for_section.push(topo_indices[topo_indices_index]);
         //println!("Now adding node {} node index {} lcsk node index {}", added_node.index(), topo_indices[topo_indices_index], node_index);
         let incoming_nodes: Vec<NodeIndex<usize>> = graph.neighbors_directed(NodeIndex::new(topo_indices[topo_indices_index]), Incoming).collect();
         if this_is_head_node == false {
@@ -249,8 +255,8 @@ pub fn anchoring_lcsk_path_for_threading (
     //println!("{:?}", Dot::new(&section_graph.map(|_, n| (*n) as char, |_, e| *e)));
     // final query section
     let query_start;
-    if anchors.len() > 2 {
-        query_start = max(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2);
+    if anchors.len() > 1 {
+        query_start = max(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2) + 1;
     }
     else {
         query_start = 0;
@@ -258,7 +264,9 @@ pub fn anchoring_lcsk_path_for_threading (
     let query_end = query.len();
     let section_query = query[query_start..query_end].to_vec();
     section_queries.push(section_query);
+    section_node_trackers.push(temp_node_tracker_for_section.clone());
     section_graphs.push(section_graph);
+    temp_node_tracker_for_section.clear();
     // add the end to anchor
     anchors.push((topo_indices.len(), *topo_indices.last().unwrap(), query_length - 1));
     let mut filtered_section_lcsk = vec![];
@@ -271,7 +279,7 @@ pub fn anchoring_lcsk_path_for_threading (
     section_lcsks.push(filtered_section_lcsk);
     //println!("SECTION LCSK {:?}", section_lcsks);
     //println!("{:?}", Dot::new(&graph.map(|_, n| (*n) as char, |_, e| *e)));
-    (section_ends, section_graphs, node_tracker, section_queries, section_lcsks)
+    (section_ends, section_graphs, section_node_trackers, section_queries, section_lcsks)
 }
 
 pub fn try_to_make_the_cut(output_graph: &POAGraph, topo_index: usize, total_num_sequences: usize) -> bool {

@@ -9,19 +9,21 @@ use petgraph::dot::Dot;
 use poa::*;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use std::thread;
+use petgraph::Incoming;
+use petgraph::graph::NodeIndex;
 mod bit_tree;
 use crate::lcsk::{lcsk_pipeline, threaded_lcsk_pipeline};
 
 fn main() {
-    for seed in 0..1 {
+    for seed in 0..2 {
         println!("seed {}", seed);
-        let seqs = get_random_sequences_from_generator(1000, 8, seed);
+        let seqs = get_random_sequences_from_generator(200, 3, seed);
         let match_score = 2;
         let mismatch_score = -2;
         let gap_open_score = 2;
         let band_size = 100;
         let kmer_size = 8;
-        let cut_limit = 200;
+        let cut_limit = 100;
         let mut children = vec![];
         let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec());
         //let mut old_aligner = Aligner2::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec(), i32::MIN, i32::MIN, band_size);
@@ -35,9 +37,9 @@ fn main() {
             println!("{:?}", Dot::new(&output_graph.map(|_, n| (*n) as char, |_, e| *e)));
             let lcsk_path = lcsk_pipeline (output_graph, query, kmer_size, &all_paths, &all_bases);
             println!("lcsk path {:?}", lcsk_path);
-            let (anchors, section_graphs, _node_tracker, section_queries, section_lcsks) = threaded_lcsk_pipeline (output_graph, query, kmer_size, &all_paths, &all_bases, cut_limit);
-            
+            let (anchors, section_graphs, section_node_trackers, section_queries, section_lcsks) = threaded_lcsk_pipeline (output_graph, query, kmer_size, &all_paths, &all_bases, cut_limit);
             let mut total_score = 0;
+            let mut all_alignments = vec![];
             for anchor_index in 0..anchors.len() + 1 {
                 if anchors.len() == 0 {
                     break;
@@ -45,6 +47,7 @@ fn main() {
                 let section_query = section_queries[anchor_index].clone();
                 let section_lcsk = section_lcsks[anchor_index].clone();
                 let section_graph = section_graphs[anchor_index].clone();
+                let section_node_tracker = section_node_trackers[anchor_index].clone();
                 //println!(" {} {:?} {} {}", anchors.len(), section_query, section_lcsks.len(), section_graphs.len());
                 for base in &section_query {
                     print!("{}", *base as char);
@@ -55,16 +58,29 @@ fn main() {
                 
                 children.push(thread::spawn(move || {
                     let mut aligner = Aligner::empty(2, -2, -2, band_size);
-                    let score = aligner.global_simd_banded_threaded(&section_query, &section_lcsk, band_size as usize, section_graph);
-                    score
-                }));
-                for _child_index in 0..children.len() {
-                    let result = children.pop().unwrap().join().unwrap();
-                    println!("current_score {}", result);
-                    total_score += result;
+                    let alignment = aligner.global_simd_banded_threaded(&section_query, &section_lcsk, band_size as usize, section_graph, section_node_tracker);
+                    alignment
+                }));  
+            }
+            for child_index in 0..children.len() {
+                let alignment = children.remove(0).join().unwrap();
+                println!("current_score {}", alignment.score);
+                total_score += alignment.score;
+                for op in alignment.operations {
+                    if op == AlignmentOperation::Match(None) && child_index > 0 {
+                        // this should only have one parent
+                        let incoming_nodes: Vec<NodeIndex<usize>> = output_graph.neighbors_directed(NodeIndex::new(anchors[child_index - 1]), Incoming).collect();
+                        assert!(incoming_nodes.len() == 1);
+                        all_alignments.push(AlignmentOperation::Match(Some((incoming_nodes[0].index(), anchors[child_index - 1]))));
+                    }
+                    else {
+                        all_alignments.push(op);
+                    }
                 }
             }
-            println!("threaded score {}", total_score);
+            println!("section combined assignment {:?}", all_alignments);
+            // for the total score anchors.len() * match score should be added as anchored at matches
+            println!("threaded score {}", total_score + anchors.len() as i32 * match_score);
             let (obtained_temp_bases, obtained_temp_path) = aligner.global_simd_banded(query, &lcsk_path, band_size as usize);
             //let (obtained_temp_bases, obtained_temp_path) = aligner.global_simd(query);
             //old_aligner.custom(query).add_to_graph();
