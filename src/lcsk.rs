@@ -118,8 +118,6 @@ pub fn anchoring_lcsk_path_for_threading (
     let mut this_is_head_node = true;
     let mut cut_fail_times = 0;
     let cut_fail_limit = 1000; // for pacbio, to run cleanly
-    let section_head_node = section_graph.add_node(graph.raw_nodes()[topo_indices[0]].weight);
-    node_tracker[topo_indices[0]] = section_head_node.index();
     let mut topo_indices_index = 0;
     // add head node and stuff to the anchors
     let mut anchors= vec![(0, topo_indices[0], 0)]; // order in graph, graph index, query index
@@ -134,7 +132,7 @@ pub fn anchoring_lcsk_path_for_threading (
             // check if this node has any incoming edges if so save them to the new graphs node
             let added_node = section_graph.add_node(graph.raw_nodes()[topo_indices[topo_indices_index]].weight);
             node_tracker[topo_indices[topo_indices_index]] = added_node.index();
-            //println!("Now adding node {} node index {} lcsk node index {}", added_node.index(), topo_indices[topo_indices_index], node_index);
+            println!("Now adding node {} node index {} lcsk node index {}", added_node.index(), topo_indices[topo_indices_index], node_index);
             let incoming_nodes: Vec<NodeIndex<usize>> = graph.neighbors_directed(NodeIndex::new(topo_indices[topo_indices_index]), Incoming).collect();
             if this_is_head_node == false {
                 for incoming_node in incoming_nodes {
@@ -179,8 +177,11 @@ pub fn anchoring_lcsk_path_for_threading (
                 anchors.push((pos.1, node_index, pos.0));
                 section_ends.push(node_tracker[node_index]);
                 // make the query stuff
-                let query_start = min(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2);
-                let query_end = max(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2);
+                let mut query_start = min(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2);
+                if query_start > 0 {
+                    query_start = query_start - 1;
+                }
+                let query_end = max(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2) + 1;
                 let section_query = query[query_start..query_end].to_vec();
                 query_cut_off_for_lcsk = query_start;
                 section_queries.push(section_query);
@@ -254,7 +255,7 @@ pub fn anchoring_lcsk_path_for_threading (
     else {
         query_start = 0;
     }
-    let query_end = query.len() - 1;
+    let query_end = query.len();
     let section_query = query[query_start..query_end].to_vec();
     section_queries.push(section_query);
     section_graphs.push(section_graph);

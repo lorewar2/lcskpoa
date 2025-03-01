@@ -159,9 +159,9 @@ impl Traceback {
 /// Uses consuming builder pattern for constructing partial order alignments with method chaining
 #[derive(Default, Clone, Debug)]
 pub struct Aligner {
-    traceback: Traceback,
+    pub traceback: Traceback,
     query: Vec<u8>,
-    poa: Poa,
+    pub poa: Poa,
 }
 
 impl  Aligner {
@@ -177,6 +177,7 @@ impl  Aligner {
     /// Add the alignment of the last query to the graph.
     pub fn add_to_graph(&mut self) -> (Vec<u8>, Vec<usize>) {
         let alignment = self.poa.recalculate_alignment(&self.traceback);
+        println!("\n score old aligner {}", alignment.score);
         let path_indices = self.poa.add_alignment(&alignment, &self.query);
         let mut path_bases = vec![];
         for path_index in &path_indices {

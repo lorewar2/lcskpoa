@@ -15,13 +15,13 @@ use crate::lcsk::{lcsk_pipeline, threaded_lcsk_pipeline};
 fn main() {
     for seed in 0..1 {
         println!("seed {}", seed);
-        let seqs = get_random_sequences_from_generator(200, 8, seed);
+        let seqs = get_random_sequences_from_generator(1000, 8, seed);
         let match_score = 2;
         let mismatch_score = -2;
         let gap_open_score = 2;
-        let band_size = 20;
-        let kmer_size = 4;
-        let cut_limit = 50;
+        let band_size = 100;
+        let kmer_size = 8;
+        let cut_limit = 200;
         let mut children = vec![];
         let mut aligner = Aligner::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec());
         //let mut old_aligner = Aligner2::new(match_score, mismatch_score, -gap_open_score, &seqs[0].as_bytes().to_vec(), i32::MIN, i32::MIN, band_size);
@@ -32,7 +32,9 @@ fn main() {
             println!("Running {} seq {:?}", index, seqs[index]);
             let query = &seqs[index].as_bytes().to_vec();
             let output_graph = aligner.graph();
+            println!("{:?}", Dot::new(&output_graph.map(|_, n| (*n) as char, |_, e| *e)));
             let lcsk_path = lcsk_pipeline (output_graph, query, kmer_size, &all_paths, &all_bases);
+            println!("lcsk path {:?}", lcsk_path);
             let (anchors, section_graphs, _node_tracker, section_queries, section_lcsks) = threaded_lcsk_pipeline (output_graph, query, kmer_size, &all_paths, &all_bases, cut_limit);
             
             let mut total_score = 0;
@@ -43,9 +45,14 @@ fn main() {
                 let section_query = section_queries[anchor_index].clone();
                 let section_lcsk = section_lcsks[anchor_index].clone();
                 let section_graph = section_graphs[anchor_index].clone();
-                println!("anchors {} {:?} {} {}", anchors.len(), section_query, section_lcsks.len(), section_graphs.len());
-                //println!("{:?}", Dot::new(&section_graph.map(|_, n| (*n) as char, |_, e| *e)));
-                //println!("section query len {} section graph len {}", section_query.len(), section_graph.node_count());
+                //println!(" {} {:?} {} {}", anchors.len(), section_query, section_lcsks.len(), section_graphs.len());
+                for base in &section_query {
+                    print!("{}", *base as char);
+                }
+                println!("\nnumber of nodes per section {}", section_graph.node_count());
+                //println!("query len {}, graph len {}", section_query.len(), section_graph.node_count());
+                println!("{:?}", Dot::new(&section_graph.map(|_, n| (*n) as char, |_, e| *e)));
+                
                 children.push(thread::spawn(move || {
                     let mut aligner = Aligner::empty(2, -2, -2, band_size);
                     let score = aligner.global_simd_banded_threaded(&section_query, &section_lcsk, band_size as usize, section_graph);
@@ -57,13 +64,13 @@ fn main() {
                     total_score += result;
                 }
             }
-            
             println!("threaded score {}", total_score);
             let (obtained_temp_bases, obtained_temp_path) = aligner.global_simd_banded(query, &lcsk_path, band_size as usize);
             //let (obtained_temp_bases, obtained_temp_path) = aligner.global_simd(query);
             //old_aligner.custom(query).add_to_graph();
             all_bases.push(obtained_temp_bases);
             all_paths.push(obtained_temp_path);
+            
         }
     }
 }

@@ -164,13 +164,14 @@ impl Aligner {
     pub fn global_simd_banded_threaded(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, bandwidth: usize, section_graph: Graph<u8, i32, Directed, usize>) -> i32 {
         self.poa.graph = section_graph;
         self.query = query.to_vec();
-        let simd_tracker = self.poa.custom_simd_banded(query, lcsk_path, bandwidth);
+        let simd_tracker = self.poa.custom_simd(query);
         let current_node = simd_tracker.last_node;
         let current_query = simd_tracker.last_query - 1;
         let simd_index = (current_query) / 8;
         let simd_inner_index = (current_query) % 8;
         let simd_vec_obtained = simd_tracker.get(current_node, simd_index);
         let final_score = simd_vec_obtained[simd_inner_index];
+        println!("score {}", final_score);
         final_score
     }
     
@@ -505,9 +506,9 @@ impl Poa {
                 }
                 simd_tracker.set(i, simd_index, max_vec);
                 f = max_vec;
-                //print!("{:?} ", max_vec);
+                print!("{:?} ", max_vec);
             }
-            //println!("");
+            println!("");
             index += 1;
         }
         simd_tracker
