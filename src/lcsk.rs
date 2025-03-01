@@ -256,7 +256,7 @@ pub fn anchoring_lcsk_path_for_threading (
     // final query section
     let query_start;
     if anchors.len() > 1 {
-        query_start = max(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2) + 1;
+        query_start = max(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2) - 1;
     }
     else {
         query_start = 0;

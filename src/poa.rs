@@ -162,13 +162,25 @@ impl Aligner {
         (path_bases, path_indices)
     }
 
-    pub fn global_simd_banded_threaded(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, bandwidth: usize, section_graph: Graph<u8, i32, Directed, usize>, section_node_tracker: Vec<usize>) -> Alignment {
+    pub fn global_simd_banded_threaded_part1(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, bandwidth: usize, section_graph: Graph<u8, i32, Directed, usize>, section_node_tracker: Vec<usize>) -> Alignment {
         self.poa.graph = section_graph;
         self.query = query.to_vec();
         let simd_tracker = self.poa.custom_simd(query);
         // use simd_tracker and node tracker to get the alignment
         let alignment = self.poa.recalculate_alignment_for_threaded (simd_tracker, section_node_tracker);
         alignment
+    }
+
+    pub fn global_simd_banded_threaded_part2(&mut self, full_alignment: Alignment, query: &Vec<u8>) -> (Vec<u8>, Vec<usize>) {
+        self.query = query.to_vec();
+        println!("WE are here");
+        let path_indices = self.poa.add_alignment(&full_alignment, &self.query);
+        println!("WE are here2");
+        let mut path_bases = vec![];
+        for path_index in &path_indices {
+            path_bases.push(self.poa.graph.raw_nodes()[*path_index].weight);
+        }
+        (path_bases, path_indices)
     }
     
     /// Return alignment graph.
@@ -714,16 +726,17 @@ impl Poa {
                 AlignmentOperation::Match(Some((_, p))) => {
                     started_alignment = true;
                     let node = NodeIndex::new(*p);
+                    
                     if (seq[i] != self.graph.raw_nodes()[*p].weight) && (seq[i] != b'X') {
                         let node = self.graph.add_node(seq[i]);
                         path_indices.push(node.index());
-                        //println!("match some 1 {}", node.index());
+                        println!("match some 1 {} {}", node.index(), i);
                         self.graph.add_edge(prev, node, 1);
                         prev = node;
                     } else {
                         // increment node weight
                         path_indices.push(node.index());
-                        //println!("match some 2 {}", node.index());
+                        println!("match some 2 {} {}", node.index(), i);
                         match self.graph.find_edge(prev, node) {
                             Some(edge) => {
                                 *self.graph.edge_weight_mut(edge).unwrap() += 1;
