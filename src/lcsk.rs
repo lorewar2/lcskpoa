@@ -135,7 +135,7 @@ pub fn anchoring_lcsk_path_for_threading (
             let added_node = section_graph.add_node(graph.raw_nodes()[topo_indices[topo_indices_index]].weight);
             node_tracker[topo_indices[topo_indices_index]] = added_node.index();
             temp_node_tracker_for_section.push(topo_indices[topo_indices_index]);
-            println!("Now adding node {} node index {} lcsk node index {}", added_node.index(), topo_indices[topo_indices_index], node_index);
+            //println!("Now adding node {} node index {} lcsk node index {}", added_node.index(), topo_indices[topo_indices_index], node_index);
             let incoming_nodes: Vec<NodeIndex<usize>> = graph.neighbors_directed(NodeIndex::new(topo_indices[topo_indices_index]), Incoming).collect();
             if this_is_head_node == false {
                 for incoming_node in incoming_nodes {
@@ -184,9 +184,9 @@ pub fn anchoring_lcsk_path_for_threading (
                 // make the query stuff
                 let mut query_start = min(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2);
                 if query_start > 0 {
-                    query_start = query_start - 1;
+                    query_start = query_start;
                 }
-                let query_end = max(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2) + 1;
+                let query_end = max(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2);
                 let section_query = query[query_start..query_end].to_vec();
                 query_cut_off_for_lcsk = query_start;
                 section_queries.push(section_query);
@@ -256,7 +256,7 @@ pub fn anchoring_lcsk_path_for_threading (
     // final query section
     let query_start;
     if anchors.len() > 1 {
-        query_start = max(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2) - 1;
+        query_start = max(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2);
     }
     else {
         query_start = 0;

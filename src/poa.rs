@@ -153,7 +153,6 @@ impl Aligner {
         self.query = query.to_vec();
         let simd_tracker = self.poa.custom_simd_banded(query, lcsk_path, band_size);
         let alignment = self.poa.recalculate_alignment(simd_tracker);
-        println!("one graph alignment {:?}", alignment.operations);
         let path_indices = self.poa.add_alignment(&alignment, &self.query);
         let mut path_bases = vec![];
         for path_index in &path_indices {
@@ -173,9 +172,9 @@ impl Aligner {
 
     pub fn global_simd_banded_threaded_part2(&mut self, full_alignment: Alignment, query: &Vec<u8>) -> (Vec<u8>, Vec<usize>) {
         self.query = query.to_vec();
-        println!("WE are here");
+        //println!("WE are here");
         let path_indices = self.poa.add_alignment(&full_alignment, &self.query);
-        println!("WE are here2");
+        //println!("WE are here2");
         let mut path_bases = vec![];
         for path_index in &path_indices {
             path_bases.push(self.poa.graph.raw_nodes()[*path_index].weight);
@@ -514,9 +513,9 @@ impl Poa {
                 }
                 simd_tracker.set(i, simd_index, max_vec);
                 f = max_vec;
-                print!("{:?} ", max_vec);
+                //print!("{:?} ", max_vec);
             }
-            println!("");
+            //println!("");
             index += 1;
         }
         simd_tracker
@@ -730,13 +729,13 @@ impl Poa {
                     if (seq[i] != self.graph.raw_nodes()[*p].weight) && (seq[i] != b'X') {
                         let node = self.graph.add_node(seq[i]);
                         path_indices.push(node.index());
-                        println!("match some 1 {} {}", node.index(), i);
+                        //println!("match some 1 {} {}", node.index(), i);
                         self.graph.add_edge(prev, node, 1);
                         prev = node;
                     } else {
                         // increment node weight
                         path_indices.push(node.index());
-                        println!("match some 2 {} {}", node.index(), i);
+                        //println!("match some 2 {} {}", node.index(), i);
                         match self.graph.find_edge(prev, node) {
                             Some(edge) => {
                                 *self.graph.edge_weight_mut(edge).unwrap() += 1;
@@ -776,12 +775,10 @@ impl Poa {
                 }
                 // we should only have to skip over deleted nodes and xclip
                 AlignmentOperation::Del(Some((_, x))) => {
-                    
                     if !started_alignment {
-                        path_indices.push(*x);
-                        //println!("Del Some 1 {}", x);
+                        path_indices.push(*x);   
                     }
-                    
+                    //println!("Del Some 1 {}", x);
                 } 
                 AlignmentOperation::Del(None) => {} 
                 AlignmentOperation::Xclip(_) => {}
