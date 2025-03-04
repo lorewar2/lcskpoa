@@ -11,7 +11,7 @@ use fxhash::FxHashMap;
 pub type POAGraph = Graph<u8, i32, Directed, usize>;
 pub type HashMapFx<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
-pub fn threaded_lcsk_pipeline (output_graph: &POAGraph, query: &Vec<u8>, kmer_size: usize, all_paths: &Vec<Vec<usize>>, all_bases: &Vec<Vec<u8>>, cut_limit: usize) -> (Vec<usize>, Vec<Graph<u8, i32, Directed, usize>>, Vec<Vec<usize>>, Vec<Vec<u8>>, Vec<Vec<(usize, usize)>>) {
+pub fn threaded_lcsk_pipeline (output_graph: &POAGraph, query: &Vec<u8>, kmer_size: usize, all_paths: &Vec<Vec<usize>>, all_bases: &Vec<Vec<u8>>, cut_limit: usize) -> (Vec<(usize, usize)>, Vec<Graph<u8, i32, Directed, usize>>, Vec<Vec<usize>>, Vec<Vec<u8>>, Vec<Vec<(usize, usize)>>) {
     //println!("{:?}", Dot::new(&output_graph.map(|_, n| (*n) as char, |_, e| *e)));
     let mut topo = Topo::new(&output_graph);
     let mut index_topo_index_value_graph_index_vec = vec![];
@@ -104,7 +104,7 @@ pub fn anchoring_lcsk_path_for_threading (
     query_length: usize,
     topo_indices: Vec<usize>,
     query: &Vec<u8>)
-    -> (Vec<usize>, Vec<Graph<u8, i32, Directed, usize>>, Vec<Vec<usize>>, Vec<Vec<u8>>, Vec<Vec<(usize, usize)>>)
+    -> (Vec<(usize, usize)>, Vec<Graph<u8, i32, Directed, usize>>, Vec<Vec<usize>>, Vec<Vec<u8>>, Vec<Vec<(usize, usize)>>)
     {
     let mut current_cut_limit = cut_limit;
     let mut section_graphs: Vec<Graph<u8, i32, Directed, usize>> = vec![];
@@ -180,7 +180,11 @@ pub fn anchoring_lcsk_path_for_threading (
                 // cut possible
                 // if yes select as anchor
                 anchors.push((pos.1, node_index, pos.0));
-                section_ends.push(node_tracker[node_index]);
+                // get the next node of end
+                
+                let incoming_nodes: Vec<NodeIndex<usize>> = graph.neighbors_directed(NodeIndex::new(node_tracker[node_index]), Outgoing).collect();
+                assert!(incoming_nodes.len() == 1);
+                section_ends.push((node_tracker[node_index], incoming_nodes[0].index()));
                 // make the query stuff
                 let mut query_start = min(anchors[anchors.len() - 1].2, anchors[anchors.len() - 2].2);
                 if query_start > 0 {

@@ -161,12 +161,12 @@ impl Aligner {
         (path_bases, path_indices)
     }
 
-    pub fn global_simd_banded_threaded_part1(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, bandwidth: usize, section_graph: Graph<u8, i32, Directed, usize>, section_node_tracker: Vec<usize>) -> Alignment {
+    pub fn global_simd_banded_threaded_part1(&mut self, anchor: (usize, usize), child_index: usize, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, bandwidth: usize, section_graph: Graph<u8, i32, Directed, usize>, section_node_tracker: Vec<usize>) -> Alignment {
         self.poa.graph = section_graph;
         self.query = query.to_vec();
         let simd_tracker = self.poa.custom_simd(query);
         // use simd_tracker and node tracker to get the alignment
-        let alignment = self.poa.recalculate_alignment_for_threaded (simd_tracker, section_node_tracker);
+        let alignment = self.poa.recalculate_alignment_for_threaded (anchor, child_index, simd_tracker, section_node_tracker);
         alignment
     }
 
@@ -606,7 +606,7 @@ impl Poa {
         }
     }
 
-    pub fn recalculate_alignment_for_threaded (&mut self, simd_tracker: SimdTracker, section_node_tracker: Vec<usize>) -> Alignment {
+    pub fn recalculate_alignment_for_threaded (&mut self, anchor: (usize, usize), child_index: usize, simd_tracker: SimdTracker, section_node_tracker: Vec<usize>) -> Alignment {
         // Get the alignment by backtracking and recalculating stuff
         let mut ops: Vec<AlignmentOperation> = vec![];
         // loop until we reach a node with no incoming
@@ -685,6 +685,19 @@ impl Poa {
             }
         }
         ops.reverse();
+        // if child index is 0, do nothing
+        // if child index is anything else, we have to convert the match nones and ins nones
+        if child_index > 0 {
+            for op in & mut ops {
+                if *op == AlignmentOperation::Match(None) {
+                    *op = AlignmentOperation::Match(Some(anchor));
+                }
+                if *op == AlignmentOperation::Ins(None) {
+                    *op = AlignmentOperation::Ins(Some(0));
+                }
+            }
+        }
+        
         Alignment {
             score: final_score as i32,
             operations: ops
