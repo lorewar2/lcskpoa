@@ -122,7 +122,7 @@ pub struct Aligner {
 
 impl Aligner {
     /// Create new instance.
-    pub fn empty (match_score: i32, mismatch_score: i32, gap_open_score: i32,_band_size: i32) -> Self {
+    pub fn empty (match_score: i32, mismatch_score: i32, gap_open_score: i32) -> Self {
         let reference = &vec![65];
         Aligner {
             query: reference.to_vec(),
@@ -149,25 +149,36 @@ impl Aligner {
         (path_bases, path_indices)
     }
 
-    pub fn global_simd_banded(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, band_size: usize) -> (Vec<u8>, Vec<usize>) {
+    pub fn global_simd_banded(&mut self, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, band_size: usize) -> (Vec<u8>, Vec<usize>, i32, usize) {
         self.query = query.to_vec();
         let simd_tracker = self.poa.custom_simd_banded(query, lcsk_path, band_size);
+        // using the simd tracker calculate how many caells were used
+        let mut total_cells = 0;
+        for (start, end) in &simd_tracker.start_end_tracker {
+            total_cells += end - start + 1;
+        }
         let alignment = self.poa.recalculate_alignment(simd_tracker);
+        let score = alignment.score;
         let path_indices = self.poa.add_alignment(&alignment, &self.query);
         let mut path_bases = vec![];
         for path_index in &path_indices {
             path_bases.push(self.poa.graph.raw_nodes()[*path_index].weight);
         }
-        (path_bases, path_indices)
+        (path_bases, path_indices, score, total_cells * 4)
     }
 
-    pub fn global_simd_banded_threaded_part1(&mut self, anchor: (usize, usize), child_index: usize, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, bandwidth: usize, section_graph: Graph<u8, i32, Directed, usize>, section_node_tracker: Vec<usize>) -> Alignment {
+    pub fn global_simd_banded_threaded_part1(&mut self, anchor: (usize, usize), child_index: usize, query: &Vec<u8>, lcsk_path: &Vec<(usize, usize)>, bandwidth: usize, section_graph: Graph<u8, i32, Directed, usize>, section_node_tracker: Vec<usize>) -> (Alignment, usize) {
         self.poa.graph = section_graph;
         self.query = query.to_vec();
-        let simd_tracker = self.poa.custom_simd(query);
+        let simd_tracker = self.poa.custom_simd_banded(query, lcsk_path, bandwidth);
+        // using the simd tracker calculate how many caells were used
+        let mut total_cells = 0;
+        for (start, end) in &simd_tracker.start_end_tracker {
+            total_cells += end - start + 1;
+        }
         // use simd_tracker and node tracker to get the alignment
         let alignment = self.poa.recalculate_alignment_for_threaded (anchor, child_index, simd_tracker, section_node_tracker);
-        alignment
+        (alignment, total_cells)
     }
 
     pub fn global_simd_banded_threaded_part2(&mut self, full_alignment: Alignment, query: &Vec<u8>) -> (Vec<u8>, Vec<usize>) {
@@ -308,7 +319,7 @@ impl Poa {
         if lcsk_path.len() == 0 {
             no_kmers = true;
         }
-        println!("no kmers {}", no_kmers);
+        //println!("no kmers {}", no_kmers);
         let mut start_banding_query_node = (0, 0);
         let mut end_banding_query_node = &(0, 0);
         let mut banding_started = false;
@@ -532,7 +543,7 @@ impl Poa {
         let simd_inner_index = (current_query) % 8;
         let simd_vec_obtained = simd_tracker.get(current_node, simd_index);
         let final_score = simd_vec_obtained[simd_inner_index];
-        println!("simd score: {} vec {:?} {} {} {:?}", final_score, simd_vec_obtained, simd_index, simd_inner_index, simd_tracker.start_end_tracker[current_node]);
+        //println!("simd score: {} vec {:?} {} {} {:?}", final_score, simd_vec_obtained, simd_index, simd_inner_index, simd_tracker.start_end_tracker[current_node]);
         loop {
             let mut current_alignment_operation = AlignmentOperation::Match(None);
             //check the score ins left of query
@@ -793,7 +804,9 @@ impl Poa {
                     }
                     //println!("Del Some 1 {}", x);
                 } 
-                AlignmentOperation::Del(None) => {} 
+                AlignmentOperation::Del(None) => {
+                    //println!("Del None");
+                } 
                 AlignmentOperation::Xclip(_) => {}
                 AlignmentOperation::Yclip(_, r) => {
                     i = *r;
