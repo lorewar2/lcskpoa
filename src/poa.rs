@@ -93,23 +93,20 @@ impl SimdTracker {
         // this should happen, but if it did try to control
         else if j > self.start_end_tracker[i].1 {
             // go left signal
-            let j_increment = i32x8::from_array([-100_000, -200_000, -300_000, -400_000, -500_000, -600_000, -700_000, -800_000]);
-            return j_increment;
+            return i32x8::splat(-222_222);
         }
         // make it go up to meet the band, modify the values do it does not go left should be ok with same numbers
         else if j < self.start_end_tracker[i].0 {
             // go up signal
-            let neg_10 = i32x8::splat(-800_000);
-            return neg_10;
+            return i32x8::splat(-888_888);
         }
         else if j == 0 {
             // go up signal
-            let neg_10 = i32x8::splat(-999_999);
-            return neg_10;
+            return i32x8::splat(-999_999);
         }
         else {
             //println!("{} {} {} What happened here", j, self.start_end_tracker[i].0, self.start_end_tracker[i].1);
-            return i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1])
+            return i32x8::splat(-111_111);
         }
     }
     fn set(&mut self, i: usize, j: usize, simd: i32x8) {
@@ -566,33 +563,22 @@ impl Poa {
             let mut next_jump = 0;
             let mut next_node = 1;
             // check the simd_vec for special signal indicating out of band
-            if simd_vec_obtained ==  i32x8::from_array([-100_000, -200_000, -300_000, -400_000, -500_000, -600_000, -700_000, -800_000]) ||
-                simd_prev_vec_obtained ==  i32x8::from_array([-100_000, -200_000, -300_000, -400_000, -500_000, -600_000, -700_000, -800_000]) 
-            {
-                // out of band go left
-                //println!("going left");
+            if simd_vec_obtained ==  i32x8::splat(-222_222) || simd_prev_vec_obtained ==  i32x8::splat(-222_222) {
                 current_alignment_operation = AlignmentOperation::Ins(Some(current_node));
                 next_jump = current_query - 1;
                 next_node = current_node - 1;
             }
-            else if simd_vec_obtained == i32x8::splat(-800_000) || simd_prev_vec_obtained == i32x8::splat(-800_000) {
-                // out of band go up
-                //println!("going up1");
+            else if simd_vec_obtained == i32x8::splat(-888_888) || simd_prev_vec_obtained == i32x8::splat(-888_888) {
                 current_alignment_operation = AlignmentOperation::Del(None);
                 next_jump = current_query - 1;
                 next_node = current_node - 1;
             }
             else if simd_vec_obtained == i32x8::splat(-999_999) || simd_prev_vec_obtained == i32x8::splat(-999_999) {
-                // out of band go up
-                //
-                //println!("going up2");
                 current_alignment_operation = AlignmentOperation::Del(None);
                 next_jump = current_query - 1;
                 next_node = current_node - 1;
             }
-            else if simd_vec_obtained == i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1]) || simd_prev_vec_obtained == i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1]) {
-                // out of band go up
-                //println!("WHAT");
+            else if simd_vec_obtained == i32x8::splat(-111_111) || simd_prev_vec_obtained == i32x8::splat(-111_111) {
                 current_alignment_operation = AlignmentOperation::Match(None);
                 next_jump = current_query - 1;
                 next_node = current_node - 1;
@@ -686,33 +672,23 @@ impl Poa {
             // Check left if gap open difference with left
             let prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_node), Incoming).collect();
             let simd_prev_vec_obtained = simd_tracker.get(current_node, prev_simd_index);
-            if simd_vec_obtained ==  i32x8::from_array([-100_000, -200_000, -300_000, -400_000, -500_000, -600_000, -700_000, -800_000]) ||
-                simd_prev_vec_obtained ==  i32x8::from_array([-100_000, -200_000, -300_000, -400_000, -500_000, -600_000, -700_000, -800_000]) 
-            {
-                // out of band go left
-                //println!("going left");
-                current_alignment_operation = AlignmentOperation::Ins(Some(current_node));
+            // special out of band signal, should not happen but happens if bad lcsk and low band
+            if simd_vec_obtained ==  i32x8::splat(-222_222) || simd_prev_vec_obtained ==  i32x8::splat(-222_222) {
+                current_alignment_operation = AlignmentOperation::Ins(Some(section_node_tracker[current_node]));
                 next_jump = current_query - 1;
-                next_node = current_node - 1;
+                next_node = current_node;
             }
-            else if simd_vec_obtained == i32x8::splat(-800_000) || simd_prev_vec_obtained == i32x8::splat(-800_000) {
-                // out of band go up
-                //println!("going up1");
+            else if simd_vec_obtained == i32x8::splat(-888_888) || simd_prev_vec_obtained == i32x8::splat(-888_888) {
                 current_alignment_operation = AlignmentOperation::Del(None);
-                next_jump = current_query - 1;
+                next_jump = current_query;
                 next_node = current_node - 1;
             }
             else if simd_vec_obtained == i32x8::splat(-999_999) || simd_prev_vec_obtained == i32x8::splat(-999_999) {
-                // out of band go up
-                //
-                //println!("going up2");
                 current_alignment_operation = AlignmentOperation::Del(None);
-                next_jump = current_query - 1;
+                next_jump = current_query;
                 next_node = current_node - 1;
             }
-            else if simd_vec_obtained == i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1]) || simd_prev_vec_obtained == i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1]) {
-                // out of band go up
-                println!("WHAT");
+            else if simd_vec_obtained == i32x8::splat(-111_111) || simd_prev_vec_obtained == i32x8::splat(-111_111) {
                 current_alignment_operation = AlignmentOperation::Match(None);
                 next_jump = current_query - 1;
                 next_node = current_node - 1;
@@ -730,7 +706,6 @@ impl Poa {
                         let simd_vec_obtained = simd_tracker.get(i_p, simd_index);
                         let simd_prev_vec_obtained = simd_tracker.get(i_p, prev_simd_index);
                         if current_cell_score == simd_vec_obtained[simd_inner_index] + self.gap_open_score {
-                            //current_alignment_operation = AlignmentOperation::Del(None);
                             current_alignment_operation = AlignmentOperation::Del(Some((0, section_node_tracker[current_node])));
                             next_jump = current_query;
                             next_node = i_p;

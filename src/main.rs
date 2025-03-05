@@ -34,7 +34,7 @@ fn bench_mark_all () {
         ("./data/Synthetic30000.fa", 300, 100, 12),
         ("./data/Synthetic100000.fa", 600, 200, 8),
         ("./data/Synthetic100000.fa", 600, 200, 12),
-        ("./data/Pacbio.fa", 300, 200, 8),
+        ("./data/Pacbio.fa", 500, 200, 8),
         ("./data/Pacbio.fa", 500, 200, 12),
     ];
     
