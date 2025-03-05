@@ -9,6 +9,8 @@ use poa::*;
 use std::{thread, fs::File, io::{self, BufRead}, path::Path};
 use lcsk::{lcsk_pipeline, threaded_lcsk_pipeline};
 use std::time::Instant;
+use io::Write;
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 const MATCH_SCORE: i32 = 2;
 const MISMATCH_SCORE: i32 = -2;
@@ -20,19 +22,19 @@ fn main() {
 
 fn bench_mark_all () {
     let test_cases = vec![
-        ("./data/Synthetic10.fa", 5, 20, 2),
-        ("./data/Synthetic10.fa", 5, 20, 4),
-        ("./data/Synthetic100.fa", 20, 50, 4),
-        ("./data/Synthetic100.fa", 20, 50, 8),
-        ("./data/Synthetic1000.fa", 100, 100, 4),
-        ("./data/Synthetic1000.fa", 100, 100, 8),
-        ("./data/Synthetic10000.fa", 300, 100, 8),
-        ("./data/Synthetic10000.fa", 300, 100, 12),
-        ("./data/Synthetic30000.fa", 300, 100, 8),
-        ("./data/Synthetic30000.fa", 300, 100, 12),
-        ("./data/Synthetic100000.fa", 600, 200, 8),
-        ("./data/Synthetic100000.fa", 600, 200, 12),
-        ("./data/Pacbio.fa", 300, 200, 8),
+        //("./data/Synthetic10.fa", 5, 20, 2),
+        //("./data/Synthetic10.fa", 5, 20, 4),
+        //("./data/Synthetic100.fa", 20, 50, 4),
+        //("./data/Synthetic100.fa", 20, 50, 8),
+        //("./data/Synthetic1000.fa", 100, 100, 4),
+        //("./data/Synthetic1000.fa", 100, 100, 8),
+        //("./data/Synthetic10000.fa", 300, 100, 8),
+        //("./data/Synthetic10000.fa", 300, 100, 12),
+        //("./data/Synthetic30000.fa", 300, 100, 8),
+        //("./data/Synthetic30000.fa", 300, 100, 12),
+        //("./data/Synthetic100000.fa", 600, 200, 8),
+        //("./data/Synthetic100000.fa", 600, 200, 12),
+        //("./data/Pacbio.fa", 300, 200, 8),
         ("./data/Pacbio.fa", 300, 200, 12),
     ];
     
@@ -206,4 +208,85 @@ fn get_sequences_from_file (filename: &str) -> Vec<Vec<String>> {
         }
     }
     result
+}
+
+fn write_vec_to_file(filename: &str, data: &Vec<Vec<String>>) {
+    let path = Path::new(filename);
+    let mut file = File::create(&path).unwrap();
+    
+    for (index, group) in data.iter().enumerate() {
+        let mut within_index = 0;
+        for line in group {
+            writeln!(file, ">{} {}", index, within_index).unwrap();
+            writeln!(file, "{}", line).unwrap();
+            within_index += 1;
+        }
+    }
+}
+
+fn get_random_sequences_from_generator(sequence_length: usize, num_of_sequences: usize, seed: usize) -> Vec<String> {
+    let mut rng = StdRng::seed_from_u64(seed as u64);
+    //vector to save all the sequences 
+    let mut randomvec: Vec<String> = vec![];
+    //generate the first sequence of random bases of length sequence_length
+    let mut firstseq: Vec<char> = vec![];
+    for _ in 0..sequence_length {
+        firstseq.push(match rng.gen_range(0..4) {
+            0 => 'A',
+            1 => 'C',
+            2 => 'G',
+            3 => 'T',
+            _ => 'X'
+        });
+    }
+    //randomvec.push(firstseq.iter().collect::<String>());
+    //loop for 10 
+    for _ in 0..num_of_sequences {
+        //clone the sequence
+        let mut mutseq = firstseq.clone();
+        //mutate the all the bases with 0.05 chance
+        for i in 0..mutseq.len() {
+            match rng.gen_range(0..20) {
+                0 => {
+                    mutseq[i] = match rng.gen_range(0..4) {
+                        0 => 'A',
+                        1 => 'C',
+                        2 => 'G',
+                        3 => 'T',
+                        _ => 'X'
+                    }
+                },
+                _ => {}
+            }
+        }
+        //put indels at location with chance 0.1 
+        for i in 0..mutseq.len() {
+            let mean_value: f64 = 1.5; //2.0 before
+            //get length of the indel geometric distributed mean value 1.5
+            let indel_length: usize  = ((1.0 - rng.gen::<f64>()).ln() / (1.00 - (1.00 / mean_value) as f64).ln()).ceil() as usize;
+            match rng.gen_range(0..20) {
+                //insertion of elements
+                0 => {
+                    if i + indel_length < mutseq.len() {
+                        for _ in 0..indel_length{
+                            mutseq.insert(i + 1, mutseq[i]);
+                        }
+                    }
+                },
+                //deletion of elements
+                1 => {
+                    if i + indel_length < mutseq.len() {
+                        for _ in 0..indel_length{
+                            mutseq.remove(i);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        //println!("{:?}", mutseq.iter().collect::<String>());
+        //insert to vector
+        randomvec.push(mutseq.iter().collect::<String>());
+    }
+    randomvec
 }

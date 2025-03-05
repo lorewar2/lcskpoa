@@ -86,7 +86,7 @@ impl SimdTracker {
     // get function, if not in band do something, try to get it back to band
     fn get(&self, i: usize, j: usize) -> i32x8 {
         // get the matrix cell if in band range else return the appropriate values
-        if !(self.start_end_tracker[i].0 > j || self.start_end_tracker[i].1 <= j || self.simd_matrix[i].is_empty()) {
+        if !(self.start_end_tracker[i].0 > j || self.start_end_tracker[i].1 < j || self.simd_matrix[i].is_empty()) {
             let real_position = j - self.start_end_tracker[i].0;
             self.simd_matrix[i][real_position]
         }
@@ -96,14 +96,18 @@ impl SimdTracker {
             let gap_open = i32x8::splat(self.gap_open as i32);
             let j_multi = i32x8::splat(j as i32 * 8);
             let j_increment = i32x8::from_array([1, 2, 3, 4, 5, 6, 7, 8]);
-            //println!("Go left");
+            println!("Go left");
             return ((j_multi + j_increment) * gap_open) + neg_10;
         }
         // make it go up to meet the band, modify the values do it does not go left should be ok with same numbers
-        else {
+        else if j < self.start_end_tracker[i].0 {
             let neg_10 = i32x8::splat(self.gap_open * (1_000_000 - i as i32));
-            //println!("Go UP");
+            println!("Go UP");
             return i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1]) * neg_10;
+        }
+        else {
+            println!("{} {} {} What happened here", j, self.start_end_tracker[i].0, self.start_end_tracker[i].1);
+            return i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1])
         }
     }
     fn set(&mut self, i: usize, j: usize, simd: i32x8) {
@@ -670,6 +674,7 @@ impl Poa {
                     }
                 }
             }
+            println!("{:?}", current_alignment_operation);
             ops.push(current_alignment_operation);
             current_query = next_jump;
             current_node = next_node;
@@ -708,7 +713,7 @@ impl Poa {
                 }
             }
         }
-        
+        println!("Stop recalculating");
         Alignment {
             score: final_score as i32,
             operations: ops
