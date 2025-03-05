@@ -35,7 +35,6 @@
 //! assert_eq!(aligner.global(z).alignment().score, 5);
 //! ```
 
-use std::cmp::{max};
 
 use petgraph::graph::NodeIndex;
 use petgraph::visit::Topo;

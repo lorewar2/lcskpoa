@@ -1,7 +1,6 @@
 #![feature(portable_simd)]
 #![allow(dead_code)]
 mod poa;
-mod pairwise;
 mod bit_tree;
 mod lcsk;
 
