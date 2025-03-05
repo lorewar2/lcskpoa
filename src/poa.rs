@@ -92,21 +92,23 @@ impl SimdTracker {
         }
         // this should happen, but if it did try to control
         else if j > self.start_end_tracker[i].1 {
-            let neg_10 = i32x8::splat(-(10 * (1_000_000 - i as i32))); //will not go up or diagonal, **gap end/mismatch should not be 10** test this :C
-            let gap_open = i32x8::splat(self.gap_open as i32);
-            let j_multi = i32x8::splat(j as i32 * 8);
-            let j_increment = i32x8::from_array([1, 2, 3, 4, 5, 6, 7, 8]);
-            println!("Go left");
-            return ((j_multi + j_increment) * gap_open) + neg_10;
+            // go left signal
+            let j_increment = i32x8::from_array([-100_000, -200_000, -300_000, -400_000, -500_000, -600_000, -700_000, -800_000]);
+            return j_increment;
         }
         // make it go up to meet the band, modify the values do it does not go left should be ok with same numbers
         else if j < self.start_end_tracker[i].0 {
-            let neg_10 = i32x8::splat(self.gap_open * (1_000_000 - i as i32));
-            println!("Go UP");
-            return i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1]) * neg_10;
+            // go up signal
+            let neg_10 = i32x8::splat(-800_000);
+            return neg_10;
+        }
+        else if j == 0 {
+            // go up signal
+            let neg_10 = i32x8::splat(-999_999);
+            return neg_10;
         }
         else {
-            println!("{} {} {} What happened here", j, self.start_end_tracker[i].0, self.start_end_tracker[i].1);
+            //println!("{} {} {} What happened here", j, self.start_end_tracker[i].0, self.start_end_tracker[i].1);
             return i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1])
         }
     }
@@ -558,34 +560,69 @@ impl Poa {
             let simd_inner_index = (current_query) % 8;
 
             let simd_vec_obtained = simd_tracker.get(current_node, simd_index);
+            let simd_prev_vec_obtained = simd_tracker.get(current_node, prev_simd_index);
             let current_cell_score = simd_vec_obtained[simd_inner_index];
+            let prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_node), Incoming).collect();
             let mut next_jump = 0;
             let mut next_node = 1;
-            // Check left if gap open difference with left
-            let prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_node), Incoming).collect();
-            let simd_prev_vec_obtained = simd_tracker.get(current_node, prev_simd_index);
-            if current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.gap_open_score {
+            // check the simd_vec for special signal indicating out of band
+            if simd_vec_obtained ==  i32x8::from_array([-100_000, -200_000, -300_000, -400_000, -500_000, -600_000, -700_000, -800_000]) ||
+                simd_prev_vec_obtained ==  i32x8::from_array([-100_000, -200_000, -300_000, -400_000, -500_000, -600_000, -700_000, -800_000]) 
+            {
+                // out of band go left
+                //println!("going left");
                 current_alignment_operation = AlignmentOperation::Ins(Some(current_node));
                 next_jump = current_query - 1;
-                next_node = current_node;
+                next_node = current_node - 1;
+            }
+            else if simd_vec_obtained == i32x8::splat(-800_000) || simd_prev_vec_obtained == i32x8::splat(-800_000) {
+                // out of band go up
+                //println!("going up1");
+                current_alignment_operation = AlignmentOperation::Del(None);
+                next_jump = current_query - 1;
+                next_node = current_node - 1;
+            }
+            else if simd_vec_obtained == i32x8::splat(-999_999) || simd_prev_vec_obtained == i32x8::splat(-999_999) {
+                // out of band go up
+                //
+                //println!("going up2");
+                current_alignment_operation = AlignmentOperation::Del(None);
+                next_jump = current_query - 1;
+                next_node = current_node - 1;
+            }
+            else if simd_vec_obtained == i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1]) || simd_prev_vec_obtained == i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1]) {
+                // out of band go up
+                //println!("WHAT");
+                current_alignment_operation = AlignmentOperation::Match(None);
+                next_jump = current_query - 1;
+                next_node = current_node - 1;
             }
             else {
-                for prev in &prevs {
-                    let i_p = prev.index();
-                    // Top
-                    let simd_vec_obtained = simd_tracker.get(i_p, simd_index);
-                    let simd_prev_vec_obtained = simd_tracker.get(i_p, prev_simd_index);
-                    if current_cell_score == simd_vec_obtained[simd_inner_index] + self.gap_open_score {
-                        //current_alignment_operation = AlignmentOperation::Del(None);
-                        current_alignment_operation = AlignmentOperation::Del(Some((0, current_node)));
-                        next_jump = current_query;
-                        next_node = i_p;
-                    }
-                    // Diagonal
-                    else if (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.match_score as i32) || (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.mismatch_score as i32) {
-                        current_alignment_operation = AlignmentOperation::Match(Some((i_p, current_node)));
-                        next_jump = current_query - 1;
-                        next_node = i_p;
+                // Check left if gap open difference with left
+                let simd_prev_vec_obtained = simd_tracker.get(current_node, prev_simd_index);
+                if current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.gap_open_score {
+                    current_alignment_operation = AlignmentOperation::Ins(Some(current_node));
+                    next_jump = current_query - 1;
+                    next_node = current_node;
+                }
+                else {
+                    for prev in &prevs {
+                        let i_p = prev.index();
+                        // Top
+                        let simd_vec_obtained = simd_tracker.get(i_p, simd_index);
+                        let simd_prev_vec_obtained = simd_tracker.get(i_p, prev_simd_index);
+                        if current_cell_score == simd_vec_obtained[simd_inner_index] + self.gap_open_score {
+                            //current_alignment_operation = AlignmentOperation::Del(None);
+                            current_alignment_operation = AlignmentOperation::Del(Some((0, current_node)));
+                            next_jump = current_query;
+                            next_node = i_p;
+                        }
+                        // Diagonal
+                        else if (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.match_score as i32) || (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.mismatch_score as i32) {
+                            current_alignment_operation = AlignmentOperation::Match(Some((i_p, current_node)));
+                            next_jump = current_query - 1;
+                            next_node = i_p;
+                        }
                     }
                 }
             }
@@ -649,32 +686,65 @@ impl Poa {
             // Check left if gap open difference with left
             let prevs: Vec<NodeIndex<usize>> = self.graph.neighbors_directed(NodeIndex::new(current_node), Incoming).collect();
             let simd_prev_vec_obtained = simd_tracker.get(current_node, prev_simd_index);
-            if current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.gap_open_score {
-                current_alignment_operation = AlignmentOperation::Ins(Some(section_node_tracker[current_node]));
+            if simd_vec_obtained ==  i32x8::from_array([-100_000, -200_000, -300_000, -400_000, -500_000, -600_000, -700_000, -800_000]) ||
+                simd_prev_vec_obtained ==  i32x8::from_array([-100_000, -200_000, -300_000, -400_000, -500_000, -600_000, -700_000, -800_000]) 
+            {
+                // out of band go left
+                //println!("going left");
+                current_alignment_operation = AlignmentOperation::Ins(Some(current_node));
                 next_jump = current_query - 1;
-                next_node = current_node;
+                next_node = current_node - 1;
+            }
+            else if simd_vec_obtained == i32x8::splat(-800_000) || simd_prev_vec_obtained == i32x8::splat(-800_000) {
+                // out of band go up
+                //println!("going up1");
+                current_alignment_operation = AlignmentOperation::Del(None);
+                next_jump = current_query - 1;
+                next_node = current_node - 1;
+            }
+            else if simd_vec_obtained == i32x8::splat(-999_999) || simd_prev_vec_obtained == i32x8::splat(-999_999) {
+                // out of band go up
+                //
+                //println!("going up2");
+                current_alignment_operation = AlignmentOperation::Del(None);
+                next_jump = current_query - 1;
+                next_node = current_node - 1;
+            }
+            else if simd_vec_obtained == i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1]) || simd_prev_vec_obtained == i32x8::from_array([1, 1, 1, 1, 1, 1, 1, 1]) {
+                // out of band go up
+                println!("WHAT");
+                current_alignment_operation = AlignmentOperation::Match(None);
+                next_jump = current_query - 1;
+                next_node = current_node - 1;
             }
             else {
-                for prev in &prevs {
-                    let i_p = prev.index();
-                    // Top
-                    let simd_vec_obtained = simd_tracker.get(i_p, simd_index);
-                    let simd_prev_vec_obtained = simd_tracker.get(i_p, prev_simd_index);
-                    if current_cell_score == simd_vec_obtained[simd_inner_index] + self.gap_open_score {
-                        //current_alignment_operation = AlignmentOperation::Del(None);
-                        current_alignment_operation = AlignmentOperation::Del(Some((0, section_node_tracker[current_node])));
-                        next_jump = current_query;
-                        next_node = i_p;
-                    }
-                    // Diagonal
-                    else if (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.match_score as i32) || (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.mismatch_score as i32) {
-                        current_alignment_operation = AlignmentOperation::Match(Some((section_node_tracker[i_p], section_node_tracker[current_node])));
-                        next_jump = current_query - 1;
-                        next_node = i_p;
+                if current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.gap_open_score {
+                    current_alignment_operation = AlignmentOperation::Ins(Some(section_node_tracker[current_node]));
+                    next_jump = current_query - 1;
+                    next_node = current_node;
+                }
+                else {
+                    for prev in &prevs {
+                        let i_p = prev.index();
+                        // Top
+                        let simd_vec_obtained = simd_tracker.get(i_p, simd_index);
+                        let simd_prev_vec_obtained = simd_tracker.get(i_p, prev_simd_index);
+                        if current_cell_score == simd_vec_obtained[simd_inner_index] + self.gap_open_score {
+                            //current_alignment_operation = AlignmentOperation::Del(None);
+                            current_alignment_operation = AlignmentOperation::Del(Some((0, section_node_tracker[current_node])));
+                            next_jump = current_query;
+                            next_node = i_p;
+                        }
+                        // Diagonal
+                        else if (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.match_score as i32) || (current_cell_score == simd_prev_vec_obtained[prev_simd_inner_index] + self.mismatch_score as i32) {
+                            current_alignment_operation = AlignmentOperation::Match(Some((section_node_tracker[i_p], section_node_tracker[current_node])));
+                            next_jump = current_query - 1;
+                            next_node = i_p;
+                        }
                     }
                 }
             }
-            println!("{:?}", current_alignment_operation);
+            //println!("{:?}", current_alignment_operation);
             ops.push(current_alignment_operation);
             current_query = next_jump;
             current_node = next_node;
@@ -713,7 +783,7 @@ impl Poa {
                 }
             }
         }
-        println!("Stop recalculating");
+        //println!("Stop recalculating");
         Alignment {
             score: final_score as i32,
             operations: ops

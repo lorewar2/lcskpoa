@@ -22,20 +22,20 @@ fn main() {
 
 fn bench_mark_all () {
     let test_cases = vec![
-        //("./data/Synthetic10.fa", 5, 20, 2),
-        //("./data/Synthetic10.fa", 5, 20, 4),
-        //("./data/Synthetic100.fa", 20, 50, 4),
-        //("./data/Synthetic100.fa", 20, 50, 8),
-        //("./data/Synthetic1000.fa", 100, 100, 4),
-        //("./data/Synthetic1000.fa", 100, 100, 8),
-        //("./data/Synthetic10000.fa", 300, 100, 8),
-        //("./data/Synthetic10000.fa", 300, 100, 12),
-        //("./data/Synthetic30000.fa", 300, 100, 8),
-        //("./data/Synthetic30000.fa", 300, 100, 12),
-        //("./data/Synthetic100000.fa", 600, 200, 8),
-        //("./data/Synthetic100000.fa", 600, 200, 12),
-        //("./data/Pacbio.fa", 300, 200, 8),
-        ("./data/Pacbio.fa", 300, 200, 12),
+        ("./data/Synthetic10.fa", 5, 20, 2),
+        ("./data/Synthetic10.fa", 5, 20, 4),
+        ("./data/Synthetic100.fa", 20, 50, 4),
+        ("./data/Synthetic100.fa", 20, 50, 8),
+        ("./data/Synthetic1000.fa", 100, 100, 4),
+        ("./data/Synthetic1000.fa", 100, 100, 8),
+        ("./data/Synthetic10000.fa", 300, 100, 8),
+        ("./data/Synthetic10000.fa", 300, 100, 12),
+        ("./data/Synthetic30000.fa", 300, 100, 8),
+        ("./data/Synthetic30000.fa", 300, 100, 12),
+        ("./data/Synthetic100000.fa", 600, 200, 8),
+        ("./data/Synthetic100000.fa", 600, 200, 12),
+        ("./data/Pacbio.fa", 300, 200, 8),
+        ("./data/Pacbio.fa", 500, 200, 12),
     ];
     
     for (run_index, (filename, bandwidth, cut_off, k)) in test_cases.iter().enumerate() {
