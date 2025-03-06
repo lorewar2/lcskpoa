@@ -5,11 +5,7 @@ LCSKPOA: Enabling banded semi-global partial order alignments via efficient and 
 ## Setting up / Requirements
 
 Rust 1.65.0+ should be installed.
-
-# ** REQUIRES NIGHTLY FOR SIMD **
-# To activate rust nightly for the package 
-
-rustup override set nightly
+Requires Rust nightly for SIMD
 
 ## Usage
 
@@ -19,7 +15,11 @@ Download the repository.
 git clone https://github.com/lorewar2/lcskpoa.git
 cd LCSKPOA
 ```
+Activate rust nightly for the package 
 
+```bash
+rustup override set nightly
+```
 Replicate the results in paper:
 
 ```bash
