@@ -33,8 +33,14 @@ fn bench_mark_all () {
         ("./data/Synthetic30000.fa", 300, 100, 12),
         ("./data/Synthetic100000.fa", 600, 200, 8),
         ("./data/Synthetic100000.fa", 600, 200, 12),
-        ("./data/Pacbio.fa", 500, 200, 8),
-        ("./data/Pacbio.fa", 500, 200, 12),
+        ("./data/PRJNA1128051.fa", 500, 200, 8),
+        ("./data/PRJNA1128051.fa", 500, 200, 12),
+        ("./data/SRR12358174.fa", 500, 200, 8),
+        ("./data/SRR12358174.fa", 500, 200, 12),
+        ("./data/SRR12371718.fa", 500, 200, 8),
+        ("./data/SRR12371718.fa", 500, 200, 12),
+        ("./data/combined.fa", 500, 200, 8),
+        ("./data/combined.fa", 500, 200, 12),
     ];
     
     for (run_index, (filename, bandwidth, cut_off, k)) in test_cases.iter().enumerate() {
