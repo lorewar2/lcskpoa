@@ -30,4 +30,4 @@ cargo run --releae
 
 If you are using LCSKPOA in your work, please cite:
 
-[LCSKPOA: Enabling banded semi-global partial order alignments via efficient and accurate backbone generation through extended lcsk++](https://www.biorxiv.org/content/10.1101/2024.07.18.604181v1)
+[LCSKPOA: Enabling banded semi-global partial order alignments via efficient and accurate backbone generation through extended lcsk++]([https://link.springer.com/article/10.1186/s12859-025-06293-z]
